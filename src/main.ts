@@ -22,6 +22,7 @@ let blobs: Blob[] = [];
 let time: number = 0;
 let isDragging = false;
 let selectedBlob: Blob | null = null;
+let activeColorPickerBlob: Blob | null = null;
 
 function loadScene() {
   square = new Square(vec3.fromValues(0, 0, 0));
@@ -160,6 +161,77 @@ function main() {
         break;
       }
     }
+  });
+
+  canvas.addEventListener('dblclick', (event) => {
+    const pos = getClipSpaceMousePosition(event, canvas);
+    
+    for (let i = blobs.length - 1; i >= 0; i--) {
+      const blob = blobs[i];
+      const dx = pos.x - blob.center[0];
+      const dy = pos.y - blob.center[1];
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distance < blob.radius) { 
+        // Show color picker near the blob
+        const colorPickerContainer = document.getElementById('color-picker-container');
+        const colorPicker = document.getElementById('blob-color-picker') as HTMLInputElement;
+        
+        // Convert blob's current color to hex for the color picker
+        const r = Math.round(blob.color[0] * 255);
+        const g = Math.round(blob.color[1] * 255);
+        const b = Math.round(blob.color[2] * 255);
+        const hexColor = '#' + 
+          (r < 16 ? '0' : '') + r.toString(16) + 
+          (g < 16 ? '0' : '') + g.toString(16) + 
+          (b < 16 ? '0' : '') + b.toString(16);
+        
+        colorPicker.value = hexColor;
+        
+        // Position the color picker near the blob in screen space
+        const rect = canvas.getBoundingClientRect();
+        const screenX = ((blob.center[0] + 1) / 2) * canvas.width + rect.left;
+        const screenY = ((1 - (blob.center[1] + 1) / 2)) * canvas.height + rect.top;
+        
+        colorPickerContainer.style.left = `${screenX + 20}px`;
+        colorPickerContainer.style.top = `${screenY}px`;
+        colorPickerContainer.style.display = 'block';
+        
+        // Store reference to the blob being edited
+        activeColorPickerBlob = blob;
+        
+        // Prevent default behavior to avoid canvas interactions
+        event.preventDefault();
+        return;
+      }
+    }
+  });
+
+  // Add this after creating the color picker in the main function
+  const colorPicker = document.getElementById('blob-color-picker') as HTMLInputElement;
+  const colorPickerContainer = document.getElementById('color-picker-container');
+
+  // Update blob color when the color picker changes
+  colorPicker.addEventListener('input', () => {
+    if (activeColorPickerBlob) {
+      const rgb = hexToRgb(colorPicker.value);
+      activeColorPickerBlob.color = vec3.fromValues(rgb.r, rgb.g, rgb.b);
+      activeColorPickerBlob.create();
+    }
+  });
+
+  // Hide the color picker when clicking outside
+  document.addEventListener('click', (event) => {
+    if (event.target !== colorPicker && activeColorPickerBlob) {
+      colorPickerContainer.style.display = 'none';
+      activeColorPickerBlob = null;
+    }
+  });
+
+  // Also hide the color picker when the color is selected
+  colorPicker.addEventListener('change', () => {
+    colorPickerContainer.style.display = 'none';
+    activeColorPickerBlob = null;
   });
 
   function processKeyPresses() {
