@@ -6,22 +6,22 @@ import Camera from './Camera';
 import {setGL} from './globals';
 import ShaderProgram, {Shader} from './rendering/gl/ShaderProgram';
 import Circle from './geometry/Circle';
+import Blob from './geometry/Blob';
+import MetaballRenderer from './rendering/gl/MetaballRenderer';
 
 const controls = {
   tesselations: 5,
   'Load Scene': loadScene, 
-  circleColor: {
-    r: 1.0,
-    g: 0.0,
-    b: 0.0
-  }
+  color: "#ff0000", // Red as default
+  blobRadius: 0.1,
+  threshold: 0.5
 };
 
 let square: Square;
-let circles: Circle[] = [];
+let blobs: Blob[] = [];
 let time: number = 0;
 let isDragging = false;
-let selectedCircle: Circle | null = null;
+let selectedBlob: Blob | null = null;
 
 function loadScene() {
   square = new Square(vec3.fromValues(0, 0, 0));
@@ -39,26 +39,42 @@ function getClipSpaceMousePosition(event: MouseEvent, canvas: HTMLCanvasElement)
   };
 }
 
+// Helper function to convert hex color string to RGB values
+function hexToRgb(hex: string): {r: number, g: number, b: number} {
+  // Remove the # if present
+  hex = hex.replace(/^#/, '');
+  
+  // Parse the hex values
+  const bigint = parseInt(hex, 16);
+  const r = ((bigint >> 16) & 255) / 255;
+  const g = ((bigint >> 8) & 255) / 255;
+  const b = (bigint & 255) / 255;
+  
+  return { r, g, b };
+}
+
 function main() {
   window.addEventListener('keypress', function (e) {
-
     switch(e.key) {
-  
+      // Add keyboard controls if needed
     }
   }, false);
 
   window.addEventListener('keyup', function (e) {
     switch(e.key) {
+      // Add keyboard controls if needed
     }
   }, false);
 
   const gui = new DAT.GUI();
-  // Add color controls
-  const colorFolder = gui.addFolder('Circle Color');
-  colorFolder.add(controls.circleColor, 'r', 0, 1).name('Red');
-  colorFolder.add(controls.circleColor, 'g', 0, 1).name('Green');
-  colorFolder.add(controls.circleColor, 'b', 0, 1).name('Blue');
-  colorFolder.open(); 
+  // Add color control using the built-in color picker
+  const colorController = gui.addColor(controls, 'color').name('Blob Color');
+  
+  // Add blob controls
+  const blobFolder = gui.addFolder('Blob Settings');
+  blobFolder.add(controls, 'blobRadius', 0.05, 0.2).name('Blob Radius');
+  blobFolder.add(controls, 'threshold', 0.1, 1.0).name('Metaball Threshold');
+  blobFolder.open();
 
   const canvas = <HTMLCanvasElement> document.getElementById('canvas');
   const gl = <WebGL2RenderingContext> canvas.getContext('webgl2');
@@ -67,54 +83,66 @@ function main() {
   }
   setGL(gl);
 
-
   const camera = new Camera(vec3.fromValues(0, 0, -10), vec3.fromValues(0, 0, 0));
 
   const renderer = new OpenGLRenderer(canvas);
   renderer.setClearColor(1.0, 1.0, 1.0, 1); 
   gl.enable(gl.DEPTH_TEST);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
+  // Create shader programs
   const flat = new ShaderProgram([
     new Shader(gl.VERTEX_SHADER, require('./shaders/flat-vert.glsl')),
     new Shader(gl.FRAGMENT_SHADER, require('./shaders/flat-frag.glsl')),
   ]);
-
+  
+  const metaballShader = new ShaderProgram([
+    new Shader(gl.VERTEX_SHADER, require('./shaders/metaball-vert.glsl')),
+    new Shader(gl.FRAGMENT_SHADER, require('./shaders/metaball-frag.glsl')),
+  ]);
+  
+  const metaballRenderer = new MetaballRenderer(metaballShader);
 
   canvas.addEventListener('mousedown', (event) => {
     const pos = getClipSpaceMousePosition(event, canvas);
-    for (let i = circles.length - 1; i >= 0; i--) {
-      const circle = circles[i];
-      const dx = pos.x - circle.center[0];
-      const dy = pos.y - circle.center[1];
+    for (let i = blobs.length - 1; i >= 0; i--) {
+      const blob = blobs[i];
+      const dx = pos.x - blob.center[0];
+      const dy = pos.y - blob.center[1];
       const distance = Math.sqrt(dx * dx + dy * dy);
       
-      if (distance < 0.1) { 
+      if (distance < blob.radius) { 
         isDragging = true;
-        selectedCircle = circle;
+        selectedBlob = blob;
         return;
       }
     }
 
-    const circle = new Circle(
+    const blob = new Blob(
       vec3.fromValues(pos.x, pos.y, 0),
-      vec3.fromValues(controls.circleColor.r, controls.circleColor.g, controls.circleColor.b)
+      (() => {
+        const rgb = hexToRgb(controls.color);
+        return vec3.fromValues(rgb.r, rgb.g, rgb.b);
+      })(),
+      controls.blobRadius
     );
-    circle.create();
-    circles.push(circle);
+    blob.create();
+    blobs.push(blob);
   });
 
   canvas.addEventListener('mousemove', (event) => {
-    if (isDragging && selectedCircle) {
+    if (isDragging && selectedBlob) {
       const pos = getClipSpaceMousePosition(event, canvas);
-      selectedCircle.center[0] = pos.x;
-      selectedCircle.center[1] = pos.y;
-      selectedCircle.create(); 
+      selectedBlob.center[0] = pos.x;
+      selectedBlob.center[1] = pos.y;
+      selectedBlob.create(); 
     }
   });
 
   canvas.addEventListener('mouseup', () => {
     isDragging = false;
-    selectedCircle = null;
+    selectedBlob = null;
   });
 
   canvas.addEventListener('contextmenu', (event) => {
@@ -122,20 +150,30 @@ function main() {
     
     const pos = getClipSpaceMousePosition(event, canvas);
 
-    for (let i = circles.length - 1; i >= 0; i--) {
-        const circle = circles[i];
-        const dx = pos.x - circle.center[0];
-        const dy = pos.y - circle.center[1];
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        
-        if (distance < 0.1) { 
-            circles.splice(i, 1); 
-            break;
-        }
+    for (let i = blobs.length - 1; i >= 0; i--) {
+      const blob = blobs[i];
+      const dx = pos.x - blob.center[0];
+      const dy = pos.y - blob.center[1];
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distance < blob.radius) { 
+        blobs.splice(i, 1); 
+        break;
+      }
     }
   });
 
   function processKeyPresses() {
+    // Update metaball threshold from controls
+    metaballRenderer.setThreshold(controls.threshold);
+    
+    // Update blob radii if changed in controls
+    for (const blob of blobs) {
+      if (blob.radius !== controls.blobRadius && !isDragging) {
+        blob.radius = controls.blobRadius;
+        blob.create();
+      }
+    }
   }
 
   function tick() {
@@ -144,11 +182,9 @@ function main() {
     renderer.clear();
     processKeyPresses();
     
-    if (circles.length > 0) {
-        for (const circle of circles) {
-            flat.setCircleColor(circle.color[0], circle.color[1], circle.color[2]);
-            renderer.render(camera, flat, [circle], time);
-        }
+    if (blobs.length > 0) {
+      // Render metaballs instead of individual circles
+      metaballRenderer.render(camera, blobs, time);
     }
     
     time++;
@@ -159,13 +195,13 @@ function main() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     camera.setAspectRatio(window.innerWidth / window.innerHeight);
     camera.updateProjectionMatrix();
-    flat.setDimensions(window.innerWidth, window.innerHeight);
+    metaballShader.setDimensions(window.innerWidth, window.innerHeight);
   }, false);
 
   renderer.setSize(window.innerWidth, window.innerHeight);
   camera.setAspectRatio(window.innerWidth / window.innerHeight);
   camera.updateProjectionMatrix();
-  flat.setDimensions(window.innerWidth, window.innerHeight);
+  metaballShader.setDimensions(window.innerWidth, window.innerHeight);
   tick();
 }
 

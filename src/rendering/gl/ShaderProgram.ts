@@ -105,6 +105,46 @@ class ShaderProgram {
 
     if (this.attrPos != -1) gl.disableVertexAttribArray(this.attrPos);
   }
-};
+
+  setNumBlobs(num: number) {
+    this.use();
+    const loc = gl.getUniformLocation(this.prog, "u_NumBlobs");
+    if (loc !== null) {
+      gl.uniform1i(loc, num);
+    }
+  }
+
+  setThreshold(threshold: number) {
+    this.use();
+    const loc = gl.getUniformLocation(this.prog, "u_Threshold");
+    if (loc !== null) {
+      gl.uniform1f(loc, threshold);
+    }
+  }
+
+  setBlobPosition(index: number, position: vec3) {
+    this.use();
+    const loc = gl.getUniformLocation(this.prog, `u_BlobPositions[${index}]`);
+    if (loc !== null) {
+      gl.uniform3f(loc, position[0], position[1], position[2]);
+    }
+  }
+
+  setBlobRadius(index: number, radius: number) {
+    this.use();
+    const loc = gl.getUniformLocation(this.prog, `u_BlobRadii[${index}]`);
+    if (loc !== null) {
+      gl.uniform1f(loc, radius);
+    }
+  }
+
+  setBlobColor(index: number, color: vec3) {
+    this.use();
+    const loc = gl.getUniformLocation(this.prog, `u_BlobColors[${index}]`);
+    if (loc !== null) {
+      gl.uniform3f(loc, color[0], color[1], color[2]);
+    }
+  }
+}
 
 export default ShaderProgram;
