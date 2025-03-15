@@ -12,7 +12,7 @@ import MetaballRenderer from './rendering/gl/MetaballRenderer';
 const controls = {
   tesselations: 5,
   'Load Scene': loadScene, 
-  color: "#ff0000", // Red as default
+  color: "#ff0000", 
   blobRadius: 0.1,
   threshold: 0.5
 };
@@ -39,12 +39,12 @@ function getClipSpaceMousePosition(event: MouseEvent, canvas: HTMLCanvasElement)
   };
 }
 
-// Helper function to convert hex color string to RGB values
+
 function hexToRgb(hex: string): {r: number, g: number, b: number} {
-  // Remove the # if present
+
   hex = hex.replace(/^#/, '');
   
-  // Parse the hex values
+
   const bigint = parseInt(hex, 16);
   const r = ((bigint >> 16) & 255) / 255;
   const g = ((bigint >> 8) & 255) / 255;
@@ -56,18 +56,18 @@ function hexToRgb(hex: string): {r: number, g: number, b: number} {
 function main() {
   window.addEventListener('keypress', function (e) {
     switch(e.key) {
-      // Add keyboard controls if needed
+
     }
   }, false);
 
   window.addEventListener('keyup', function (e) {
     switch(e.key) {
-      // Add keyboard controls if needed
+
     }
   }, false);
 
   const gui = new DAT.GUI();
-  // Add color control using the built-in color picker
+
   const colorController = gui.addColor(controls, 'color').name('Blob Color');
   
   // Add blob controls
@@ -91,7 +91,6 @@ function main() {
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-  // Create shader programs
   const flat = new ShaderProgram([
     new Shader(gl.VERTEX_SHADER, require('./shaders/flat-vert.glsl')),
     new Shader(gl.FRAGMENT_SHADER, require('./shaders/flat-frag.glsl')),
@@ -164,10 +163,8 @@ function main() {
   });
 
   function processKeyPresses() {
-    // Update metaball threshold from controls
     metaballRenderer.setThreshold(controls.threshold);
     
-    // Update blob radii if changed in controls
     for (const blob of blobs) {
       if (blob.radius !== controls.blobRadius && !isDragging) {
         blob.radius = controls.blobRadius;
@@ -183,7 +180,7 @@ function main() {
     processKeyPresses();
     
     if (blobs.length > 0) {
-      // Render metaballs instead of individual circles
+    
       metaballRenderer.render(camera, blobs, time);
     }
     
