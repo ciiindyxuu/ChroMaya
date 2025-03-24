@@ -9,6 +9,7 @@ import Circle from './geometry/Circle';
 import Blob from './geometry/Blob';
 import MetaballRenderer from './rendering/gl/MetaballRenderer';
 import PaintRenderer from './rendering/gl/PaintRenderer';
+import PaletteHistory, { MixingDish } from './palette/PaletteHistory';
 
 const controls = {
   tesselations: 5,
@@ -23,6 +24,46 @@ const controls = {
   }
 };
 
+const recoloringControls = {
+  enableRecoloring: false,
+  applyRecoloring: () => {
+    if (!activeMixingDish) return;
+    
+    // Save state before recoloring
+    saveState();
+    
+    // Store original blobs for propagation
+    const originalBlobs = activeMixingDish.blobs.map(blob => {
+      const copy = new Blob(
+        vec3.clone(blob.center as vec3),
+        vec3.clone(blob.color),
+        blob.radius
+      );
+      copy.create();
+      return copy;
+    });
+    
+    // Update the dish with current blobs
+    activeMixingDish.blobs = blobs.map(blob => {
+      const copy = new Blob(
+        vec3.clone(blob.center as vec3),
+        vec3.clone(blob.color),
+        blob.radius
+      );
+      copy.create();
+      return copy;
+    });
+    
+    // Propagate changes to descendants
+    paletteHistory.propagateColorChanges(activeMixingDish, originalBlobs);
+    
+    // Update all paint strokes that used this dish or its descendants
+    updatePaintStrokesFromHistory();
+    
+    updatePaletteHistoryDisplay();
+  }
+};
+
 let square: Square;
 let blobs: Blob[] = [];
 let time: number = 0;
@@ -33,6 +74,19 @@ let isPaintingMode = false;
 let currentBrushColor = vec3.fromValues(1, 0, 0); // Default red
 let brushSize = 0.05;
 let paintStrokes: {position: vec2, color: vec3, size: number}[] = [];
+let paletteHistory: PaletteHistory;
+let activeMixingDish: MixingDish | null = null;
+let isEditingDish = false;
+let dishBeingEdited: MixingDish | null = null;
+let undoStack: AppState[] = [];
+let redoStack: AppState[] = [];
+
+// Define a type for our application state
+interface AppState {
+  dishes: MixingDish[];
+  activeId: number;
+  currentBlobs: Blob[];
+}
 
 function loadScene() {
   square = new Square(vec3.fromValues(0, 0, 0));
@@ -150,6 +204,11 @@ function main() {
   paintingFolder.add(controls, 'clearPainting').name('Clear Painting');
   paintingFolder.open();
 
+  const recoloringFolder = gui.addFolder('Recoloring');
+  recoloringFolder.add(recoloringControls, 'enableRecoloring').name('Enable Recoloring');
+  recoloringFolder.add(recoloringControls, 'applyRecoloring').name('Apply Recoloring');
+  recoloringFolder.open();
+
   const canvas = <HTMLCanvasElement> document.getElementById('canvas');
   const gl = <WebGL2RenderingContext> canvas.getContext('webgl2');
   if (!gl) {
@@ -183,6 +242,41 @@ function main() {
   ]);
   
   const paintRenderer = new PaintRenderer(paintShader);
+
+  // Initialize palette history
+  paletteHistory = new PaletteHistory();
+  activeMixingDish = paletteHistory.activeDish;
+  
+  // Add a new control to the GUI
+  const historyFolder = gui.addFolder('Palette History');
+  historyFolder.add({
+    'New Mixing Dish': () => {
+      // Save current state before making changes
+      saveState();
+      
+      // Save current blobs to the active dish before creating a new one
+      if (activeMixingDish) {
+        activeMixingDish.blobs = blobs.map(blob => {
+          const copy = new Blob(
+            vec3.clone(blob.center as vec3),
+            vec3.clone(blob.color),
+            blob.radius
+          );
+          copy.create();
+          return copy;
+        });
+      }
+      
+      const newDish = paletteHistory.createNewDish();
+      activeMixingDish = newDish;
+      blobs = []; // Clear current blobs
+      updatePaletteHistoryDisplay();
+    }
+  }, 'New Mixing Dish');
+  historyFolder.open();
+  
+  // Create the palette history display
+  createPaletteHistoryDisplay();
 
   canvas.addEventListener('mousedown', (event) => {
     const pos = getClipSpaceMousePosition(event, canvas);
@@ -245,6 +339,9 @@ function main() {
       }
     }
 
+    // Save state before creating a new blob
+    saveState();
+    
     const blob = new Blob(
       vec3.fromValues(pos.x, pos.y, 0),
       (() => {
@@ -277,6 +374,10 @@ function main() {
   });
 
   canvas.addEventListener('mouseup', () => {
+    if (isDragging && selectedBlob) {
+      // Save state after moving a blob
+      saveState();
+    }
     isDragging = false;
     selectedBlob = null;
   });
@@ -293,6 +394,8 @@ function main() {
       const distance = Math.sqrt(dx * dx + dy * dy);
       
       if (distance < blob.radius) { 
+        // Save state before deleting a blob
+        saveState();
         blobs.splice(i, 1); 
         break;
       }
@@ -366,6 +469,10 @@ function main() {
 
   // Also hide the color picker when the color is selected
   colorPicker.addEventListener('change', () => {
+    if (activeColorPickerBlob) {
+      // Save state after changing a blob's color
+      saveState();
+    }
     colorPickerContainer.style.display = 'none';
     activeColorPickerBlob = null;
   });
@@ -400,6 +507,20 @@ function main() {
       metaballRenderer.render(camera, blobs, time);
     }
     
+    // Update palette history display if needed
+    if (isEditingDish && dishBeingEdited) {
+      // Update the dish with current blobs
+      dishBeingEdited.blobs = blobs.map(blob => {
+        const copy = new Blob(
+          vec3.clone(blob.center as vec3),
+          vec3.clone(blob.color),
+          blob.radius
+        );
+        copy.create();
+        return copy;
+      });
+    }
+    
     time++;
     requestAnimationFrame(tick);
   }
@@ -432,29 +553,226 @@ function main() {
   colorPaletteContainer.style.borderRadius = '5px';
   document.body.appendChild(colorPaletteContainer);
 
-  // Add this after creating the color palette container
-  const instructionsElement = document.createElement('div');
-  instructionsElement.style.position = 'absolute';
-  instructionsElement.style.top = '10px';
-  instructionsElement.style.left = '10px';
-  instructionsElement.style.background = 'rgba(255, 255, 255, 0.7)';
-  instructionsElement.style.padding = '10px';
-  instructionsElement.style.borderRadius = '5px';
-  instructionsElement.style.maxWidth = '300px';
-  instructionsElement.innerHTML = `
-    <h3>Instructions:</h3>
-    <ul>
-      <li>Click to create blobs</li>
-      <li>Drag to move blobs</li>
-      <li>Right-click to delete blobs</li>
-      <li>Double-click to change blob color</li>
-      <li>Toggle Painting Mode to paint with blob colors</li>
-      <li>Alt+Click in painting mode to sample colors</li>
-    </ul>
-  `;
-  document.body.appendChild(instructionsElement);
+  addUndoRedoControls(gui);
+  initUndoStack();
 
   tick();
+}
+
+// Function to update paint strokes based on history
+function updatePaintStrokesFromHistory() {
+  // Create a new array for updated paint strokes
+  const updatedPaintStrokes: {position: vec2, color: vec3, size: number}[] = [];
+  
+  for (const stroke of paintStrokes) {
+    const pos = stroke.position;
+    const dish = paletteHistory.getDishForPixel(pos[0], pos[1]);
+    
+    if (dish) {
+      // Get the average color of the dish
+      const avgColor = dish.getAverageColor();
+      
+      // Create a new stroke with the updated color
+      updatedPaintStrokes.push({
+        position: vec2.clone(pos),
+        color: avgColor,
+        size: stroke.size
+      });
+    } else {
+      // Keep the original stroke if no dish is associated
+      updatedPaintStrokes.push({
+        position: vec2.clone(pos),
+        color: vec3.clone(stroke.color),
+        size: stroke.size
+      });
+    }
+  }
+  
+  // Replace the paint strokes array
+  paintStrokes = updatedPaintStrokes;
+}
+
+function createPaletteHistoryDisplay() {
+  const container = document.createElement('div');
+  container.id = 'palette-history-container';
+  container.style.position = 'absolute';
+  container.style.left = '10px';
+  container.style.top = '10px';
+  container.style.background = 'rgba(255, 255, 255, 0.7)';
+  container.style.padding = '5px';
+  container.style.borderRadius = '5px';
+  container.style.maxWidth = '200px';
+  document.body.appendChild(container);
+  
+  updatePaletteHistoryDisplay();
+}
+
+function updatePaletteHistoryDisplay() {
+  const container = document.getElementById('palette-history-container');
+  if (!container) return;
+  
+  container.innerHTML = '<h3>Palette History</h3>';
+  
+  paletteHistory.dishes.forEach((dish, index) => {
+    const dishElement = document.createElement('div');
+    dishElement.style.margin = '5px 0';
+    dishElement.style.cursor = 'pointer';
+    dishElement.style.padding = '5px';
+    dishElement.style.border = dish === activeMixingDish ? '2px solid blue' : '1px solid #ccc';
+    
+    // Create color preview
+    const colorPreview = document.createElement('div');
+    const avgColor = dish.getAverageColor();
+    colorPreview.style.backgroundColor = rgbToHex(avgColor[0], avgColor[1], avgColor[2]);
+    colorPreview.style.width = '20px';
+    colorPreview.style.height = '20px';
+    colorPreview.style.display = 'inline-block';
+    colorPreview.style.marginRight = '5px';
+    
+    dishElement.appendChild(colorPreview);
+    dishElement.appendChild(document.createTextNode(`Dish ${index + 1}`));
+    
+    // Add click handler to select this dish
+    dishElement.addEventListener('click', () => {
+      activeMixingDish = dish;
+      blobs = dish.blobs.map(blob => {
+        const copy = new Blob(
+          vec3.clone(blob.center as vec3),
+          vec3.clone(blob.color),
+          blob.radius
+        );
+        copy.create();
+        return copy;
+      });
+      updatePaletteHistoryDisplay();
+    });
+    
+    container.appendChild(dishElement);
+  });
+}
+
+function saveState() {
+  // Create a deep copy of the current state
+  const currentState: AppState = {
+    dishes: [],
+    activeId: activeMixingDish ? activeMixingDish.id : -1,
+    currentBlobs: []
+  };
+  
+  // Copy dishes with their blobs
+  currentState.dishes = paletteHistory.dishes.map(dish => {
+    const dishCopy = new MixingDish(dish.id, null);
+    dishCopy.blobs = dish.blobs.map(blob => {
+      const blobCopy = new Blob(
+        vec3.clone(blob.center as vec3),
+        vec3.clone(blob.color),
+        blob.radius
+      );
+      blobCopy.create();
+      return blobCopy;
+    });
+    dishCopy.usedForPainting = dish.usedForPainting;
+    return dishCopy;
+  });
+  
+  // Set up parent-child relationships
+  paletteHistory.dishes.forEach((dish, index) => {
+    if (dish.parent) {
+      const parentIndex = paletteHistory.dishes.findIndex(d => d.id === dish.parent.id);
+      if (parentIndex >= 0) {
+        currentState.dishes[index].parent = currentState.dishes[parentIndex];
+        currentState.dishes[parentIndex].children.push(currentState.dishes[index]);
+      }
+    }
+  });
+  
+  // Copy current blobs
+  currentState.currentBlobs = blobs.map(blob => {
+    const blobCopy = new Blob(
+      vec3.clone(blob.center as vec3),
+      vec3.clone(blob.color),
+      blob.radius
+    );
+    blobCopy.create();
+    return blobCopy;
+  });
+  
+  console.log(`Saving state with ${currentState.dishes.length} dishes and ${currentState.currentBlobs.length} blobs`);
+  undoStack.push(currentState);
+  redoStack = [];
+}
+
+function restoreState(state: AppState) {
+  console.log(`Restoring state with ${state.dishes.length} dishes and ${state.currentBlobs.length} blobs`);
+  
+  // Restore dishes
+  paletteHistory.dishes = state.dishes;
+  
+  // Restore active dish
+  activeMixingDish = state.dishes.find(dish => dish.id === state.activeId) || 
+                     (state.dishes.length > 0 ? state.dishes[0] : null);
+  paletteHistory.activeDish = activeMixingDish;
+  
+  // Restore current blobs
+  blobs = state.currentBlobs.map(blob => {
+    const copy = new Blob(
+      vec3.clone(blob.center as vec3),
+      vec3.clone(blob.color),
+      blob.radius
+    );
+    copy.create();
+    return copy;
+  });
+  
+  // Update UI
+  updatePaletteHistoryDisplay();
+}
+
+function undo() {
+  if (undoStack.length <= 1) {
+    console.log("Nothing to undo");
+    return; // Keep at least one state
+  }
+  
+  // Get current state
+  const currentState = undoStack.pop();
+  if (currentState) {
+    console.log(`Moving state to redo stack`);
+    redoStack.push(currentState);
+  }
+  
+  // Restore previous state
+  const previousState = undoStack[undoStack.length - 1];
+  console.log(`Restoring previous state`);
+  restoreState(previousState);
+}
+
+function redo() {
+  if (redoStack.length === 0) {
+    console.log("Nothing to redo");
+    return;
+  }
+  
+  // Get next state
+  const nextState = redoStack.pop();
+  if (!nextState) return;
+  
+  // Save current state to undo stack
+  undoStack.push(nextState);
+  
+  // Restore next state
+  restoreState(nextState);
+}
+
+function initUndoStack() {
+  saveState();
+}
+
+function addUndoRedoControls(gui: DAT.GUI) {
+  const undoRedoFolder = gui.addFolder('Edit');
+  undoRedoFolder.add({ undo: undo }, 'undo').name('Undo');
+  undoRedoFolder.add({ redo: redo }, 'redo').name('Redo');
+  undoRedoFolder.open();
 }
 
 main();
