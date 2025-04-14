@@ -73,7 +73,7 @@ let activeColorPickerBlob: Blob | null = null;
 let isPaintingMode = false;
 let currentBrushColor = vec3.fromValues(1, 0, 0); // Default red
 let brushSize = 0.05;
-let paintStrokes: {position: vec2, color: vec3, size: number}[] = [];
+let paintStrokes: {position: vec2, color: vec3, size: number, sourceType: 'blob' | 'dish' | 'manual'}[] = [];
 let paletteHistory: PaletteHistory;
 let activeMixingDish: MixingDish | null = null;
 let isEditingDish = false;
@@ -319,7 +319,8 @@ function main() {
         paintStrokes.push({
           position: vec2.fromValues(pos.x, pos.y),
           color: vec3.clone(currentBrushColor),
-          size: brushSize
+          size: brushSize,
+          sourceType: 'manual'
         });
       }
       return; // Important: return here to prevent blob creation
@@ -360,7 +361,8 @@ function main() {
       paintStrokes.push({
         position: vec2.fromValues(pos.x, pos.y),
         color: vec3.clone(currentBrushColor),
-        size: brushSize
+        size: brushSize,
+        sourceType: 'manual'
       });
       return;
     }
@@ -562,7 +564,7 @@ function main() {
 // Function to update paint strokes based on history
 function updatePaintStrokesFromHistory() {
   // Create a new array for updated paint strokes
-  const updatedPaintStrokes: {position: vec2, color: vec3, size: number}[] = [];
+  const updatedPaintStrokes: {position: vec2, color: vec3, size: number, sourceType: 'blob' | 'dish' | 'manual'}[] = [];
   
   for (const stroke of paintStrokes) {
     const pos = stroke.position;
@@ -576,14 +578,16 @@ function updatePaintStrokesFromHistory() {
       updatedPaintStrokes.push({
         position: vec2.clone(pos),
         color: avgColor,
-        size: stroke.size
+        size: stroke.size,
+        sourceType: 'dish'
       });
     } else {
       // Keep the original stroke if no dish is associated
       updatedPaintStrokes.push({
         position: vec2.clone(pos),
         color: vec3.clone(stroke.color),
-        size: stroke.size
+        size: stroke.size,
+        sourceType: stroke.sourceType
       });
     }
   }
