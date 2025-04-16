@@ -294,20 +294,6 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
        edit_label.setStyleSheet("font-weight: bold; margin-top: 5px;")
        left_panel.addWidget(edit_label)
 
-       # === Dummy Controls ===
-       delete_button = QtWidgets.QPushButton("Delete Color")
-       radius_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-       radius_slider.setMinimum(1)
-       radius_slider.setMaximum(100)
-       radius_slider.setValue(50)
-       radius_label = QtWidgets.QLabel("Change Blob Radius")
-
-       left_panel.addWidget(delete_button)
-       left_panel.addWidget(radius_label)
-       left_panel.addWidget(radius_slider)
-
-       left_panel.addStretch()
-
        # === RIGHT PANEL (Mixing Dish) ===
        right_panel = QtWidgets.QVBoxLayout()
        content_layout.addLayout(right_panel, 2)
