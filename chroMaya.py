@@ -230,7 +230,7 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
    def __init__(self, parent=get_maya_main_window()):
        super(ChroMayaWindow, self).__init__(parent)
        self.setWindowTitle("ChroMaya")
-       self.setMinimumSize(600, 500)
+       self.setMinimumSize(900, 500)
        self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
        central_widget = QtWidgets.QWidget()
        self.setCentralWidget(central_widget)
@@ -279,7 +279,7 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
        left_panel.addWidget(swatch_instructions)
 
        self.color_preview = QtWidgets.QLabel()
-       self.color_preview.setFixedSize(80, 40)
+       self.color_preview.setFixedHeight(30)
        self.color_preview.setStyleSheet("background-color: #ffffff; border: 2px solid #aaa; border-radius: 4px;")
        left_panel.addWidget(self.color_preview)
 
@@ -316,6 +316,26 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
        self.mixing_dish.colorSelected.connect(self.set_maya_brush_color)
        self.mixing_dish.colorSelected.connect(self.handle_mixing_dish_color)  # Add this line
        right_panel.addWidget(self.mixing_dish)
+
+       # === Divider Line ===
+       divider = QtWidgets.QFrame()
+       divider.setFrameShape(QtWidgets.QFrame.HLine)
+       divider.setFrameShadow(QtWidgets.QFrame.Sunken)
+       left_panel.addWidget(divider)
+
+
+       # === Subheader2===
+       history_label = QtWidgets.QLabel("Palette History:")
+       history_label.setStyleSheet("font-weight: bold; margin-top: 5px;")
+       left_panel.addWidget(history_label)
+
+
+       # === Palette History Buttons ===
+       undo_button = QtWidgets.QPushButton("Undo Color")
+       redo_button = QtWidgets.QPushButton("Redo Color")
+       left_panel.addWidget(undo_button)
+       left_panel.addWidget(redo_button)
+
 
    def open_color_picker(self):
        """Modified to handle only adding new color blobs"""
