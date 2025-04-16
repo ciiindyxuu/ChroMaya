@@ -256,7 +256,7 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
        # Add Color Blobs Section
        add_color_label = QtWidgets.QLabel("Add Color Blobs:")
        left_panel.addWidget(add_color_label)
-       add_color_label.setStyleSheet("font-weight: bold; margin-top: 5px;")
+       add_color_label.setStyleSheet("font-weight: bold;")
 
        color_picker_btn = QtWidgets.QPushButton("Add New Color Blob")
        color_picker_btn.setToolTip("Click to add a new color blob to the mixing dish")
@@ -271,7 +271,7 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
 
        # Current Swatch Section
        swatch_label = QtWidgets.QLabel("Current Swatch:")
-       swatch_label.setStyleSheet("font-weight: bold; margin-top: 5px;")
+       swatch_label.setStyleSheet("font-weight: bold; margin-top: 1px;")
        left_panel.addWidget(swatch_label)
 
        swatch_instructions = QtWidgets.QLabel("Shift + Left Click anywhere on the mixing dish\nto sample colors")
@@ -291,7 +291,7 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
 
        # === Subheader2===
        history_label = QtWidgets.QLabel("Palette History:")
-       history_label.setStyleSheet("font-weight: bold; margin-top: 5px;")
+       history_label.setStyleSheet("font-weight: bold; margin-top: 1px;")
        left_panel.addWidget(history_label)
 
 
