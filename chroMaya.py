@@ -289,27 +289,6 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
        divider.setFrameShadow(QtWidgets.QFrame.Sunken)
        left_panel.addWidget(divider)
 
-       # === Subheader ===
-       edit_label = QtWidgets.QLabel("Edit Colors:")
-       edit_label.setStyleSheet("font-weight: bold; margin-top: 5px;")
-       left_panel.addWidget(edit_label)
-
-       # === RIGHT PANEL (Mixing Dish) ===
-       right_panel = QtWidgets.QVBoxLayout()
-       content_layout.addLayout(right_panel, 2)
-
-       self.mixing_dish = MixingDishWidget()
-       self.mixing_dish.colorSelected.connect(self.set_maya_brush_color)
-       self.mixing_dish.colorSelected.connect(self.handle_mixing_dish_color)  # Add this line
-       right_panel.addWidget(self.mixing_dish)
-
-       # === Divider Line ===
-       divider = QtWidgets.QFrame()
-       divider.setFrameShape(QtWidgets.QFrame.HLine)
-       divider.setFrameShadow(QtWidgets.QFrame.Sunken)
-       left_panel.addWidget(divider)
-
-
        # === Subheader2===
        history_label = QtWidgets.QLabel("Palette History:")
        history_label.setStyleSheet("font-weight: bold; margin-top: 5px;")
@@ -321,6 +300,15 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
        redo_button = QtWidgets.QPushButton("Redo Color")
        left_panel.addWidget(undo_button)
        left_panel.addWidget(redo_button)
+
+       # === RIGHT PANEL (Mixing Dish) ===
+       right_panel = QtWidgets.QVBoxLayout()
+       content_layout.addLayout(right_panel, 2)
+
+       self.mixing_dish = MixingDishWidget()
+       self.mixing_dish.colorSelected.connect(self.set_maya_brush_color)
+       self.mixing_dish.colorSelected.connect(self.handle_mixing_dish_color)  # Add this line
+       right_panel.addWidget(self.mixing_dish)
 
 
    def open_color_picker(self):
