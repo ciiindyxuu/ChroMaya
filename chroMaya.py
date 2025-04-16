@@ -31,6 +31,8 @@ class MixingDishWidget(QtWidgets.QWidget):
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.setMouseTracking(True)  # Enable mouse tracking for hover effects
+        self.waiting_for_blob_placement = False
+        self.pending_blob_color = None
         
     def addBlob(self, pos, color):
         self.blobs.append({
@@ -112,6 +114,24 @@ class MixingDishWidget(QtWidgets.QWidget):
             painter.drawImage(0, 0, buffer)
         
     def mousePressEvent(self, event):
+        # Handle blob placement mode
+        if self.waiting_for_blob_placement and event.button() == QtCore.Qt.LeftButton:
+            self.addBlob(event.pos(), self.pending_blob_color)
+            self.waiting_for_blob_placement = False
+            self.pending_blob_color = None
+            QtWidgets.QApplication.restoreOverrideCursor()
+            return
+
+        # Shift + Left Click for color sampling
+        if event.button() == QtCore.Qt.LeftButton and event.modifiers() == QtCore.Qt.ShiftModifier:
+            pos = event.pos()
+            color = self.getMixedColorAt(pos)
+            if color:
+                self.colorSelected.emit(color)
+                om.MGlobal.displayInfo("ChroMaya: Color sampled successfully")
+                return
+
+        # Regular left click for blob manipulation
         if event.button() == QtCore.Qt.LeftButton:
             blob_index = self.find_blob_at_position(event.pos())
             if blob_index is not None:
@@ -233,19 +253,34 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
        left_panel = QtWidgets.QVBoxLayout()
        content_layout.addLayout(left_panel, 1)
 
-       # Color Picker
-       select_color = QtWidgets.QLabel("Select a Color:")
-       left_panel.addWidget(select_color)
-       select_color.setStyleSheet("font-weight: bold; margin-top: 5px;")
+       # Add Color Blobs Section
+       add_color_label = QtWidgets.QLabel("Add Color Blobs:")
+       left_panel.addWidget(add_color_label)
+       add_color_label.setStyleSheet("font-weight: bold; margin-top: 5px;")
 
-       color_picker_btn = QtWidgets.QPushButton("Open Color Picker")
+       color_picker_btn = QtWidgets.QPushButton("Add New Color Blob")
+       color_picker_btn.setToolTip("Click to add a new color blob to the mixing dish")
        color_picker_btn.clicked.connect(self.open_color_picker)
+       left_panel.addWidget(color_picker_btn)
+
+       # === Divider Line ===
+       divider = QtWidgets.QFrame()
+       divider.setFrameShape(QtWidgets.QFrame.HLine)
+       divider.setFrameShadow(QtWidgets.QFrame.Sunken)
+       left_panel.addWidget(divider)
+
+       # Current Swatch Section
+       swatch_label = QtWidgets.QLabel("Current Swatch:")
+       swatch_label.setStyleSheet("font-weight: bold; margin-top: 5px;")
+       left_panel.addWidget(swatch_label)
+
+       swatch_instructions = QtWidgets.QLabel("Shift + Left Click anywhere on the mixing dish\nto sample colors")
+       swatch_instructions.setStyleSheet("font-size: 10px; color: #666;")
+       left_panel.addWidget(swatch_instructions)
 
        self.color_preview = QtWidgets.QLabel()
-       self.color_preview.setFixedSize(60, 30)
-       self.color_preview.setStyleSheet("background-color: #ffffff; border: 1px solid #aaa;")
-
-       left_panel.addWidget(color_picker_btn)
+       self.color_preview.setFixedSize(80, 40)
+       self.color_preview.setStyleSheet("background-color: #ffffff; border: 2px solid #aaa; border-radius: 4px;")
        left_panel.addWidget(self.color_preview)
 
        # === Divider Line ===
@@ -279,14 +314,17 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
 
        self.mixing_dish = MixingDishWidget()
        self.mixing_dish.colorSelected.connect(self.set_maya_brush_color)
+       self.mixing_dish.colorSelected.connect(self.handle_mixing_dish_color)  # Add this line
        right_panel.addWidget(self.mixing_dish)
 
    def open_color_picker(self):
+       """Modified to handle only adding new color blobs"""
        color = QtWidgets.QColorDialog.getColor(parent=self)
        if color.isValid():
-           hex_color = color.name()
-           self.color_preview.setStyleSheet(f"background-color: {hex_color}; border: 1px solid #aaa;")
-           self.set_maya_brush_color(color)
+           # Let user click where to place the blob
+           QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CrossCursor)
+           self.mixing_dish.waiting_for_blob_placement = True
+           self.mixing_dish.pending_blob_color = color
 
    def set_maya_brush_color(self, qcolor):
        r = qcolor.redF()
