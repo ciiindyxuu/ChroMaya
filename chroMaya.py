@@ -19,9 +19,6 @@ def get_maya_main_window():
 
 class MixingDishWidget(QtWidgets.QWidget):
     colorSelected = QtCore.Signal(QtGui.QColor)
-
-class MixingDishWidget(QtWidgets.QWidget):
-    colorSelected = QtCore.Signal(QtGui.QColor)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -30,8 +27,10 @@ class MixingDishWidget(QtWidgets.QWidget):
         self.current_radius = 30
         self.mixing_radius = 60  
         self.dragging_blob = None
+        self.drag_offset = None
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
+        self.setMouseTracking(True)  # Enable mouse tracking for hover effects
         
     def addBlob(self, pos, color):
         self.blobs.append({
@@ -114,15 +113,50 @@ class MixingDishWidget(QtWidgets.QWidget):
         
     def mousePressEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton:
-            color = QtWidgets.QColorDialog.getColor() 
-            if color.isValid():
-                self.addBlob(event.pos(), color)
+            blob_index = self.find_blob_at_position(event.pos())
+            if blob_index is not None:
+                self.dragging_blob = blob_index
+                blob_pos = self.blobs[blob_index]['pos']
+                self.drag_offset = event.pos() - blob_pos
+            else:
+                color = QtWidgets.QColorDialog.getColor()
+                if color.isValid():
+                    self.addBlob(event.pos(), color)
         elif event.button() == QtCore.Qt.RightButton:
             pos = event.pos()
             color = self.getMixedColorAt(pos)
             if color:
                 self.colorSelected.emit(color)
                 
+    def mouseMoveEvent(self, event):
+        if self.dragging_blob is not None:
+            # Update blob position while dragging
+            new_pos = event.pos() - self.drag_offset
+            self.blobs[self.dragging_blob]['pos'] = new_pos
+            self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self.dragging_blob = None
+            self.drag_offset = None
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            blob_index = self.find_blob_at_position(event.pos())
+            if blob_index is not None:
+                self.blobs.pop(blob_index)
+                self.update()
+                om.MGlobal.displayInfo(f"Deleted blob at index {blob_index}")
+
+    def find_blob_at_position(self, pos):
+        for i, blob in enumerate(self.blobs):
+            dx = pos.x() - blob['pos'].x()
+            dy = pos.y() - blob['pos'].y()
+            dist = (dx * dx + dy * dy) ** 0.5
+            if dist <= blob['radius']:
+                return i
+        return None
+
     def getMixedColorAt(self, pos):
         """Enhanced color mixing with better interpolation"""
         colors = []
