@@ -37,12 +37,82 @@ class MixingDishWidget(QtWidgets.QWidget):
         self.ideal_radius = 0.2
         self.falloff_margin = 0.3
         
+        # History for undo/redo operations
+        self.history = []
+        self.history_position = -1
+        self.max_history = 20
+        self.save_state()  # Save initial empty state
+        
+        # Set up tooltip
+        self.setToolTip(
+            "Left click: Add a new color blob\n"
+            "Drag: Move a blob\n"
+            "Double-click: Delete a blob\n"
+            "Shift + Double-click: Change blob color\n"
+            "Shift + Left click: Sample mixed color\n"
+            "Right click: Sample mixed color"
+        )
+
+    def save_state(self):
+        """Save current palette state to history"""
+        # Create deep copy of current blobs
+        current_state = []
+        for blob in self.blobs:
+            current_state.append({
+                'pos': QtCore.QPoint(blob['pos']),
+                'color': QtGui.QColor(blob['color']),
+                'radius': blob['radius']
+            })
+            
+        # If we're in the middle of the history, truncate
+        if self.history_position < len(self.history) - 1:
+            self.history = self.history[:self.history_position + 1]
+            
+        # Add current state to history
+        self.history.append(current_state)
+        self.history_position = len(self.history) - 1
+        
+        # Limit history size
+        if len(self.history) > self.max_history:
+            self.history.pop(0)
+            self.history_position -= 1
+        
+    def undo(self):
+        """Undo last action"""
+        if self.history_position > 0:
+            self.history_position -= 1
+            self.restore_state(self.history_position)
+            return True
+        return False
+        
+    def redo(self):
+        """Redo last undone action"""
+        if self.history_position < len(self.history) - 1:
+            self.history_position += 1
+            self.restore_state(self.history_position)
+            return True
+        return False
+        
+    def restore_state(self, position):
+        """Restore palette to a specific state in history"""
+        if 0 <= position < len(self.history):
+            state = self.history[position]
+            self.blobs = []
+            for blob in state:
+                self.blobs.append({
+                    'pos': blob['pos'],
+                    'color': blob['color'],
+                    'radius': blob['radius']
+                })
+            self.update()
+            
     def addBlob(self, pos, color):
         self.blobs.append({
             'pos': pos,
             'color': color,
             'radius': self.current_radius
         })
+        self.save_state()  # Save state after adding a blob
         self.update()
     
     def metaball_function(self, distance, radius):
@@ -186,7 +256,9 @@ class MixingDishWidget(QtWidgets.QWidget):
             self.update()
 
     def mouseReleaseEvent(self, event):
-        if event.button() == QtCore.Qt.LeftButton:
+        if event.button() == QtCore.Qt.LeftButton and self.dragging_blob is not None:
+            # Save state after completing a drag operation
+            self.save_state()
             self.dragging_blob = None
             self.drag_offset = None
 
@@ -194,9 +266,21 @@ class MixingDishWidget(QtWidgets.QWidget):
         if event.button() == QtCore.Qt.LeftButton:
             blob_index = self.find_blob_at_position(event.pos())
             if blob_index is not None:
-                self.blobs.pop(blob_index)
-                self.update()
-                om.MGlobal.displayInfo(f"Deleted blob at index {blob_index}")
+                # If pressing Shift, edit the blob color
+                if event.modifiers() == QtCore.Qt.ShiftModifier:
+                    current_color = self.blobs[blob_index]['color']
+                    new_color = QtWidgets.QColorDialog.getColor(current_color)
+                    if new_color.isValid():
+                        self.blobs[blob_index]['color'] = new_color
+                        self.save_state()  # Save state after changing color
+                        self.update()
+                        om.MGlobal.displayInfo(f"Changed blob color at index {blob_index}")
+                # Otherwise delete the blob
+                else:
+                    self.blobs.pop(blob_index)
+                    self.save_state()  # Save state after deleting a blob
+                    self.update()
+                    om.MGlobal.displayInfo(f"Deleted blob at index {blob_index}")
 
     def find_blob_at_position(self, pos):
         for i, blob in enumerate(self.blobs):
@@ -264,6 +348,71 @@ class MixingDishWidget(QtWidgets.QWidget):
             min(1.0, max(0.0, final_color[2]))
         )
 
+class ColorHistoryWidget(QtWidgets.QWidget):
+    """Widget that displays a history of recently used colors"""
+    colorSelected = QtCore.Signal(QtGui.QColor)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.colors = []
+        self.max_colors = 10
+        self.setMinimumHeight(30)
+        self.setMinimumWidth(100)
+        
+    def addColor(self, color):
+        """Add a color to history, avoiding duplicates"""
+        # Don't add if it's the same as the most recent color
+        if self.colors and color.rgb() == self.colors[0].rgb():
+            return
+            
+        # Add new color at the beginning
+        self.colors.insert(0, QtGui.QColor(color))
+        
+        # Trim to max size
+        if len(self.colors) > self.max_colors:
+            self.colors.pop()
+            
+        self.update()
+        
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        
+        if not self.colors:
+            # Draw empty state
+            painter.setPen(QtGui.QPen(QtGui.QColor(180, 180, 180), 1))
+            painter.drawText(self.rect(), QtCore.Qt.AlignCenter, "No colors yet")
+            return
+            
+        # Calculate swatch size
+        width = self.width()
+        height = self.height()
+        count = len(self.colors)
+        swatch_width = min(width / count if count > 0 else width, height * 1.5)
+        
+        # Draw color swatches
+        for i, color in enumerate(self.colors):
+            x = i * swatch_width
+            rect = QtCore.QRectF(x, 0, swatch_width, height)
+            
+            # Draw color swatch
+            painter.setPen(QtGui.QPen(QtGui.QColor(120, 120, 120), 1))
+            painter.setBrush(QtGui.QBrush(color))
+            painter.drawRect(rect.adjusted(1, 1, -1, -1))
+            
+    def mousePressEvent(self, event):
+        if not self.colors or event.button() != QtCore.Qt.LeftButton:
+            return
+            
+        # Calculate which color was clicked
+        width = self.width()
+        count = len(self.colors)
+        swatch_width = min(width / count if count > 0 else width, self.height() * 1.5)
+        
+        index = int(event.x() / swatch_width)
+        if 0 <= index < len(self.colors):
+            self.colorSelected.emit(self.colors[index])
+
 # Our ChroMaya GUI
 class ChroMayaWindow(QtWidgets.QMainWindow):
    def __init__(self, parent=get_maya_main_window()):
@@ -274,6 +423,7 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
        central_widget = QtWidgets.QWidget()
        self.setCentralWidget(central_widget)
        self.build_ui(central_widget)
+       self.selected_colors = []
 
    def build_ui(self, parent_widget):
        layout = QtWidgets.QVBoxLayout(parent_widget)
@@ -328,15 +478,26 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
        divider.setFrameShadow(QtWidgets.QFrame.Sunken)
        left_panel.addWidget(divider)
 
-       # === Subheader2===
+       # === Palette History ===
        history_label = QtWidgets.QLabel("Palette History:")
        history_label.setStyleSheet("font-weight: bold; margin-top: 1px;")
        left_panel.addWidget(history_label)
-
+       
+       # Add color history widget
+       self.color_history = ColorHistoryWidget()
+       self.color_history.colorSelected.connect(self.handle_history_color_selected)
+       self.color_history.setFixedHeight(30)
+       left_panel.addWidget(self.color_history)
 
        # === Palette History Buttons ===
        undo_button = QtWidgets.QPushButton("Undo Color")
+       undo_button.setToolTip("Undo last palette change")
+       undo_button.clicked.connect(self.undo_palette)
+       
        redo_button = QtWidgets.QPushButton("Redo Color")
+       redo_button.setToolTip("Redo last undone palette change")
+       redo_button.clicked.connect(self.redo_palette)
+       
        left_panel.addWidget(undo_button)
        left_panel.addWidget(redo_button)
 
@@ -346,9 +507,8 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
 
        self.mixing_dish = MixingDishWidget()
        self.mixing_dish.colorSelected.connect(self.set_maya_brush_color)
-       self.mixing_dish.colorSelected.connect(self.handle_mixing_dish_color)  # Add this line
+       self.mixing_dish.colorSelected.connect(self.handle_mixing_dish_color)
        right_panel.addWidget(self.mixing_dish)
-
 
    def open_color_picker(self):
        """Modified to handle only adding new color blobs"""
@@ -392,12 +552,34 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
        except Exception as e:
            om.MGlobal.displayError(f"ChroMaya: Failed to set brush color: {e}")
 
+   def handle_history_color_selected(self, color):
+       """Handle when a color is selected from the history"""
+       self.handle_mixing_dish_color(color)
+       om.MGlobal.displayInfo(f"ChroMaya: Selected color from history: {color.name()}")
+       
    def handle_mixing_dish_color(self, color):
        """Handle when a color is selected from mixing dish"""
        self.color_preview.setStyleSheet(
            f"background-color: {color.name()}; border: 1px solid #aaa;"
        )
+       self.color_history.addColor(color)
        self.set_maya_brush_color(color)
+
+   def undo_palette(self):
+       """Undo last palette action"""
+       success = self.mixing_dish.undo()
+       if success:
+           om.MGlobal.displayInfo("ChroMaya: Undid last palette action")
+       else:
+           om.MGlobal.displayInfo("ChroMaya: Nothing to undo")
+
+   def redo_palette(self):
+       """Redo last undone palette action"""
+       success = self.mixing_dish.redo()
+       if success:
+           om.MGlobal.displayInfo("ChroMaya: Redid last palette action")
+       else:
+           om.MGlobal.displayInfo("ChroMaya: Nothing to redo")
 
 # The command that shows the GUI
 class ChroMayaCommand(om.MPxCommand):
