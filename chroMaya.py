@@ -33,6 +33,9 @@ class MixingDishWidget(QtWidgets.QWidget):
         self.setMouseTracking(True)  # Enable mouse tracking for hover effects
         self.waiting_for_blob_placement = False
         self.pending_blob_color = None
+        # Parameters for metaball function as described in paper
+        self.ideal_radius = 0.2
+        self.falloff_margin = 0.3
         
     def addBlob(self, pos, color):
         self.blobs.append({
@@ -41,6 +44,24 @@ class MixingDishWidget(QtWidgets.QWidget):
             'radius': self.current_radius
         })
         self.update()
+    
+    def metaball_function(self, distance, radius):
+        """
+        Implementation of the metaball function from the paper.
+        Uses a Gaussian approximation with finite extent.
+        """
+        # Transform distance to standardize falloff
+        scale_factor = self.ideal_radius / radius if radius > 0 else 1.0
+        d = distance * scale_factor
+        
+        # Calculate b parameter (ideal_radius + falloff_margin)
+        b = self.ideal_radius + self.falloff_margin
+        
+        # Return influence value
+        if d <= b:
+            return 1 - (4 * (d**6)) / (9 * (b**6)) + (17 * (d**4)) / (9 * (b**4)) - (22 * (d**2)) / (9 * (b**2))
+        else:
+            return 0.0
         
     def paintEvent(self, event):
         painter = QtGui.QPainter(self)
@@ -51,11 +72,14 @@ class MixingDishWidget(QtWidgets.QWidget):
         buffer_painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
         width = self.width()
         height = self.height()
-        resolution = 3  # Increase for better quality, decrease for better performance
+        resolution = 2  # Increase for better quality, decrease for better performance
+        
+        # Threshold for rendering as defined in paper (Eq. 1)
+        threshold = 0.5
         
         for x in range(0, width, resolution):
             for y in range(0, height, resolution):
-                field = 0.0
+                field_sum = 0.0
                 colors = []
                 weights = []
                 
@@ -63,56 +87,62 @@ class MixingDishWidget(QtWidgets.QWidget):
                     dx = x - blob['pos'].x()
                     dy = y - blob['pos'].y()
                     dist = (dx * dx + dy * dy) ** 0.5
-                    influence_radius = blob['radius'] * 3.0
                     
-                    if dist <= influence_radius:
-                        t = dist / influence_radius
-                        t = t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
-                        weight = max(0.0, 1.0 - t)
-                        field += weight
-                        
+                    # Calculate influence using metaball function
+                    influence = self.metaball_function(dist, blob['radius'])
+                    
+                    if influence > 0:
+                        field_sum += influence
                         colors.append([
                             blob['color'].redF(),
                             blob['color'].greenF(),
                             blob['color'].blueF()
                         ])
-                        weights.append(weight)
+                        weights.append(influence)
                 
-                if field > 0.5:  
+                # Only render if influence sum is above threshold (Eq. 1)
+                if field_sum >= threshold:
+                    # Calculate color using weighted average (Eq. 2)
                     total_weight = sum(weights)
+                    
                     if total_weight > 0:
                         weights = [w / total_weight for w in weights]
+                        
+                        # Use sRGB linear interpolation
                         gamma = 2.2
                         final_color = [0, 0, 0]
+                        
                         for color, weight in zip(colors, weights):
+                            # Convert to linear space for mixing
                             linear = [pow(c, gamma) for c in color]
+                            
+                            # Linear interpolation
                             final_color = [
                                 final_color[i] + linear[i] * weight 
                                 for i in range(3)
                             ]
+                        
+                        # Convert back to sRGB
                         final_color = [pow(c, 1/gamma) for c in final_color]
+                        
+                        # Create color for rendering
                         color = QtGui.QColor.fromRgbF(
                             min(1.0, max(0.0, final_color[0])),
                             min(1.0, max(0.0, final_color[1])),
                             min(1.0, max(0.0, final_color[2])),
-                            min(1.0, field)  
+                            1.0  # Solid color as in paper
                         )
+                        
                         buffer_painter.fillRect(
                             x, y, resolution, resolution, 
                             color
                         )
+        
         buffer_painter.end()
-    
-        passes = [
-            (QtGui.QPainter.CompositionMode_Plus, 0.8),
-            (QtGui.QPainter.CompositionMode_Screen, 0.4)
-        ]
         
-        for composition_mode, opacity in passes:
-            painter.setOpacity(opacity)
-            painter.setCompositionMode(composition_mode)
-            painter.drawImage(0, 0, buffer)
-        
+        # Render the buffer directly without composition modes
+        painter.drawImage(0, 0, buffer)
+
     def mousePressEvent(self, event):
         # Handle blob placement mode
         if self.waiting_for_blob_placement and event.button() == QtCore.Qt.LeftButton:
@@ -178,47 +208,56 @@ class MixingDishWidget(QtWidgets.QWidget):
         return None
 
     def getMixedColorAt(self, pos):
-        """Enhanced color mixing with better interpolation"""
+        """
+        Get mixed color at position using the metaball function from the paper
+        """
         colors = []
         weights = []
+        total_influence = 0.0
+        
+        # Threshold for valid color sampling
+        threshold = 0.01
         
         for blob in self.blobs:
             dx = pos.x() - blob['pos'].x()
             dy = pos.y() - blob['pos'].y()
             distance = (dx * dx + dy * dy) ** 0.5
-            max_distance = blob['radius'] + self.mixing_radius
             
-            if distance <= max_distance:
-                t = distance / max_distance
-                t = t * t * (3 - 2 * t) 
-                weight = 1.0 - t
-
+            # Calculate influence using metaball function
+            influence = self.metaball_function(distance, blob['radius'])
+            
+            if influence > threshold:
                 colors.append([
                     blob['color'].redF(),
                     blob['color'].greenF(),
                     blob['color'].blueF()
                 ])
-                weights.append(weight * weight) 
-                
-        if not weights:
-            return None
+                weights.append(influence)
+                total_influence += influence
         
-        total_weight = sum(weights)
-        if total_weight == 0:
+        if total_influence < threshold:
             return None
             
-        weights = [w / total_weight for w in weights]
+        # Normalize weights
+        weights = [w / total_influence for w in weights]
+        
+        # Use sRGB linear interpolation
         gamma = 2.2
         mixed_color = [0, 0, 0]
         
         for color, weight in zip(colors, weights):
+            # Convert to linear space for mixing
             linear_color = [pow(c, gamma) for c in color]
-        
+            
+            # Linear interpolation
             mixed_color = [
                 mixed + weight * linear
                 for mixed, linear in zip(mixed_color, linear_color)
             ]
+            
+        # Convert back to sRGB
         final_color = [pow(c, 1/gamma) for c in mixed_color]
+        
         return QtGui.QColor.fromRgbF(
             min(1.0, max(0.0, final_color[0])),
             min(1.0, max(0.0, final_color[1])),
