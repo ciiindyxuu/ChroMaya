@@ -748,8 +748,6 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
             self.save_palette_btn.setEnabled(True)
             om.MGlobal.displayInfo(f"ChroMaya: Saved new palette '{name}' ✅")
 
-
-
     def load_saved_palette(self, palette_data):
         self.mixing_dish.load_palette(palette_data)
         om.MGlobal.displayInfo("ChroMaya: Loaded saved palette")
