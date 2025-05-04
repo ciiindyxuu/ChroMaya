@@ -348,6 +348,14 @@ class MixingDishWidget(QtWidgets.QWidget):
             min(1.0, max(0.0, final_color[2]))
         )
 
+    def get_current_palette(self):
+        return [{'pos': blob['pos'], 'color': blob['color'], 'radius': blob['radius']} for blob in self.blobs]
+
+    def load_palette(self, palette_data):
+        self.blobs = [{'pos': QtCore.QPoint(b['pos']), 'color': QtGui.QColor(b['color']), 'radius': b['radius']} for b in palette_data]
+        self.save_state()
+        self.update()
+
 class ColorHistoryWidget(QtWidgets.QWidget):
     """Widget that displays a history of recently used colors"""
     colorSelected = QtCore.Signal(QtGui.QColor)
@@ -413,173 +421,339 @@ class ColorHistoryWidget(QtWidgets.QWidget):
         if 0 <= index < len(self.colors):
             self.colorSelected.emit(self.colors[index])
 
+# save multiple palettes
+class SavedPaletteManagerWidget(QtWidgets.QWidget):
+    paletteSelected = QtCore.Signal(list)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.saved_palettes = []  # (name, palette_data)
+        self.last_saved_index = None
+        self.active_thumb = None  # Currently highlighted thumbnail
+        self.layout = QtWidgets.QVBoxLayout(self)
+        self.layout.setAlignment(QtCore.Qt.AlignTop)
+
+        self.scroll_area = QtWidgets.QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_content = QtWidgets.QWidget()
+        self.scroll_layout = QtWidgets.QHBoxLayout(self.scroll_content)
+        self.scroll_layout.setAlignment(QtCore.Qt.AlignLeft)
+        self.scroll_layout.setSpacing(8)
+        self.scroll_area.setWidget(self.scroll_content)
+        self.scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOn)
+        self.scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.scroll_area.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        self.scroll_area.setFixedHeight(110)  # Adjust height to fit your thumbnails
+
+        self.layout.addWidget(self.scroll_area)
+
+    def add_palette(self, name, palette_data, mark_as_latest=False):
+        self.saved_palettes.append((name, palette_data))
+        thumb = PaletteThumbnailWidget(name, palette_data)
+
+        def emit_and_mark():
+            self.mark_active_thumb(thumb)
+            self.paletteSelected.emit(palette_data)
+
+        thumb.clicked.connect(emit_and_mark)
+        self.scroll_layout.addWidget(thumb)
+
+        if mark_as_latest:
+            self.last_saved_index = len(self.saved_palettes) - 1
+            self.mark_active_thumb(thumb)
+    
+    def mark_active_thumb(self, thumb_widget):
+        if self.active_thumb and self.active_thumb != thumb_widget:
+            self.active_thumb.set_active(False)
+        thumb_widget.set_active(True)
+        self.active_thumb = thumb_widget
+        
+    def handle_thumb_clicked(self, thumb_widget, palette_data):
+        self.mark_active_thumb(thumb_widget)
+        self.paletteSelected.emit(palette_data)
+
+
+    def update_last_saved(self, palette_data):
+        if self.last_saved_index is not None:
+            name, _ = self.saved_palettes[self.last_saved_index]
+            self.saved_palettes[self.last_saved_index] = (name, palette_data)
+
+            # Remove old thumbnail widget
+            item = self.scroll_layout.itemAt(self.last_saved_index)
+            if item is not None:
+                old_thumb = item.widget()
+                self.scroll_layout.removeWidget(old_thumb)
+                old_thumb.setParent(None)
+                old_thumb.deleteLater()
+
+            # Create new updated thumbnail
+            new_thumb = PaletteThumbnailWidget(name, palette_data)
+            new_thumb.clicked.connect(lambda thumb_ref, data: self.handle_thumb_clicked(thumb_ref, data))
+
+            # Insert it at the same index
+            self.scroll_layout.insertWidget(self.last_saved_index, new_thumb)
+
+            self.mark_active_thumb(new_thumb)
+
+
+# multiple palette rendering thumbnails
+class PaletteThumbnailWidget(QtWidgets.QFrame):
+    clicked = QtCore.Signal(object, list)  # emit self + palette_data
+
+
+    def __init__(self, name, palette_data, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(70, 70)
+        self.name = name
+        self.palette_data = palette_data
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.setStyleSheet("border: 1px solid #888;")
+        self.setToolTip(f"Click to load palette: {name}")
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self.clicked.emit(self, self.palette_data)
+
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+
+        # Draw blobs scaled into thumbnail space
+        for blob in self.palette_data:
+            color = QtGui.QColor(blob['color'])
+            painter.setBrush(QtGui.QBrush(color))
+            painter.setPen(QtCore.Qt.NoPen)
+
+            # Convert pos from full widget space (e.g., 400x400) to 90x90
+            scale_factor = self.width() / 400.0
+            pos = QtCore.QPointF(blob['pos']) * scale_factor
+            radius = blob['radius'] * scale_factor
+            painter.drawEllipse(pos, radius, radius)
+
+        # Draw label
+        painter.setPen(QtGui.QPen(QtCore.Qt.white))
+        painter.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Bold))
+        painter.drawText(5, 12, self.name)
+    
+    # highlights current palette user is working
+    def set_active(self, is_active):
+        if is_active:
+            self.setStyleSheet("border: 2px solid white;")
+        else:
+            self.setStyleSheet("border: 1px solid #888;")
+
+
 # Our ChroMaya GUI
 class ChroMayaWindow(QtWidgets.QMainWindow):
-   def __init__(self, parent=get_maya_main_window()):
-       super(ChroMayaWindow, self).__init__(parent)
-       self.setWindowTitle("ChroMaya")
-       self.setMinimumSize(900, 500)
-       self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
-       central_widget = QtWidgets.QWidget()
-       self.setCentralWidget(central_widget)
-       self.build_ui(central_widget)
-       self.selected_colors = []
+    def __init__(self, parent=get_maya_main_window()):
+        super(ChroMayaWindow, self).__init__(parent)
+        self.setWindowTitle("ChroMaya")
+        self.setMinimumSize(700, 500)
+        self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
+        central_widget = QtWidgets.QWidget()
+        self.setCentralWidget(central_widget)
+        self.build_ui(central_widget)
+        self.selected_colors = []
 
-   def build_ui(self, parent_widget):
-       layout = QtWidgets.QVBoxLayout(parent_widget)
+    def build_ui(self, parent_widget):
+        layout = QtWidgets.QVBoxLayout(parent_widget)
 
-       # Title
-       title_label = QtWidgets.QLabel("ChroMaya")
-       title_label.setStyleSheet("font-size: 20px; font-weight: bold;")
-       title_label.setAlignment(QtCore.Qt.AlignLeft)
-       layout.addWidget(title_label)
+        # Title
+        title_label = QtWidgets.QLabel("ChroMaya")
+        title_label.setStyleSheet("font-size: 20px; font-weight: bold;")
+        title_label.setAlignment(QtCore.Qt.AlignLeft)
+        layout.addWidget(title_label)
 
-       # Horizontal layout for left/right panels
-       content_layout = QtWidgets.QHBoxLayout()
-       layout.addLayout(content_layout)
+        # Horizontal layout for left/right panels
+        content_layout = QtWidgets.QHBoxLayout()
+        layout.addLayout(content_layout)
 
-       # === LEFT PANEL ===
-       left_panel = QtWidgets.QVBoxLayout()
-       content_layout.addLayout(left_panel, 1)
+        # === LEFT PANEL ===
+        left_panel = QtWidgets.QVBoxLayout()
+        content_layout.addLayout(left_panel, 1)
 
-       # Add Color Blobs Section
-       add_color_label = QtWidgets.QLabel("Add Color Blobs:")
-       left_panel.addWidget(add_color_label)
-       add_color_label.setStyleSheet("font-weight: bold;")
+        # Add Color Blobs Section
+        add_color_label = QtWidgets.QLabel("Add Color Blobs:")
+        left_panel.addWidget(add_color_label)
+        add_color_label.setStyleSheet("font-weight: bold;")
 
-       color_picker_btn = QtWidgets.QPushButton("Add New Color Blob")
-       color_picker_btn.setToolTip("Click to add a new color blob to the mixing dish")
-       color_picker_btn.clicked.connect(self.open_color_picker)
-       left_panel.addWidget(color_picker_btn)
+        color_instructions = QtWidgets.QLabel("Click anywhere on the mixing dish to add a\ncolor blob")
+        color_instructions.setStyleSheet("font-size: 10px; color: #666;")
+        left_panel.addWidget(color_instructions)
 
-       # === Divider Line ===
-       divider = QtWidgets.QFrame()
-       divider.setFrameShape(QtWidgets.QFrame.HLine)
-       divider.setFrameShadow(QtWidgets.QFrame.Sunken)
-       left_panel.addWidget(divider)
+        # === Divider Line ===
+        divider = QtWidgets.QFrame()
+        divider.setFrameShape(QtWidgets.QFrame.HLine)
+        divider.setFrameShadow(QtWidgets.QFrame.Sunken)
+        left_panel.addWidget(divider)
 
-       # Current Swatch Section
-       swatch_label = QtWidgets.QLabel("Current Swatch:")
-       swatch_label.setStyleSheet("font-weight: bold; margin-top: 1px;")
-       left_panel.addWidget(swatch_label)
+        # Current Swatch Section
+        swatch_label = QtWidgets.QLabel("Current Swatch:")
+        swatch_label.setStyleSheet("font-weight: bold; margin-top: 1px;")
+        left_panel.addWidget(swatch_label)
 
-       swatch_instructions = QtWidgets.QLabel("Shift + Left Click anywhere on the mixing dish\nto sample colors")
-       swatch_instructions.setStyleSheet("font-size: 10px; color: #666;")
-       left_panel.addWidget(swatch_instructions)
+        swatch_instructions = QtWidgets.QLabel("Shift + Left Click anywhere on the mixing dish\nto sample colors")
+        swatch_instructions.setStyleSheet("font-size: 10px; color: #666;")
+        left_panel.addWidget(swatch_instructions)
 
-       self.color_preview = QtWidgets.QLabel()
-       self.color_preview.setFixedHeight(30)
-       self.color_preview.setStyleSheet("background-color: #ffffff; border: 2px solid #aaa; border-radius: 4px;")
-       left_panel.addWidget(self.color_preview)
+        self.color_preview = QtWidgets.QLabel()
+        self.color_preview.setFixedHeight(30)
+        self.color_preview.setStyleSheet("background-color: #ffffff; border: 2px solid #aaa; border-radius: 4px;")
+        left_panel.addWidget(self.color_preview)
 
-       # === Divider Line ===
-       divider = QtWidgets.QFrame()
-       divider.setFrameShape(QtWidgets.QFrame.HLine)
-       divider.setFrameShadow(QtWidgets.QFrame.Sunken)
-       left_panel.addWidget(divider)
+        # === Divider Line ===
+        divider = QtWidgets.QFrame()
+        divider.setFrameShape(QtWidgets.QFrame.HLine)
+        divider.setFrameShadow(QtWidgets.QFrame.Sunken)
+        left_panel.addWidget(divider)
 
-       # === Palette History ===
-       history_label = QtWidgets.QLabel("Palette History:")
-       history_label.setStyleSheet("font-weight: bold; margin-top: 1px;")
-       left_panel.addWidget(history_label)
-       
-       # Add color history widget
-       self.color_history = ColorHistoryWidget()
-       self.color_history.colorSelected.connect(self.handle_history_color_selected)
-       self.color_history.setFixedHeight(30)
-       left_panel.addWidget(self.color_history)
+        # === Color History ===
+        history_label = QtWidgets.QLabel("Color History:")
+        history_label.setStyleSheet("font-weight: bold; margin-top: 1px;")
+        left_panel.addWidget(history_label)
+        
+        # Add color history widget
+        self.color_history = ColorHistoryWidget()
+        self.color_history.colorSelected.connect(self.handle_history_color_selected)
+        self.color_history.setFixedHeight(30)
+        left_panel.addWidget(self.color_history)
 
-       # === Palette History Buttons ===
-       undo_button = QtWidgets.QPushButton("Undo Color")
-       undo_button.setToolTip("Undo last palette change")
-       undo_button.clicked.connect(self.undo_palette)
-       
-       redo_button = QtWidgets.QPushButton("Redo Color")
-       redo_button.setToolTip("Redo last undone palette change")
-       redo_button.clicked.connect(self.redo_palette)
-       
-       left_panel.addWidget(undo_button)
-       left_panel.addWidget(redo_button)
+        # === Divider Line ===
+        divider = QtWidgets.QFrame()
+        divider.setFrameShape(QtWidgets.QFrame.HLine)
+        divider.setFrameShadow(QtWidgets.QFrame.Sunken)
+        left_panel.addWidget(divider)
 
-       # === RIGHT PANEL (Mixing Dish) ===
-       right_panel = QtWidgets.QVBoxLayout()
-       content_layout.addLayout(right_panel, 2)
+        # === Palette History ===
+        palette_history_label = QtWidgets.QLabel("Palette History")
+        palette_history_label.setStyleSheet("font-weight: bold; margin-top: 1px;")
+        left_panel.addWidget(palette_history_label)
 
-       self.mixing_dish = MixingDishWidget()
-       self.mixing_dish.colorSelected.connect(self.set_maya_brush_color)
-       self.mixing_dish.colorSelected.connect(self.handle_mixing_dish_color)
-       right_panel.addWidget(self.mixing_dish)
+        undo_button = QtWidgets.QPushButton("Undo Mixing Dish Action")
+        undo_button.setToolTip("Undo last palette change")
+        undo_button.clicked.connect(self.undo_palette)
+        
+        redo_button = QtWidgets.QPushButton("Redo Mixing Dish Action")
+        redo_button.setToolTip("Redo last undone palette change")
+        redo_button.clicked.connect(self.redo_palette)
+        
+        left_panel.addWidget(undo_button)
+        left_panel.addWidget(redo_button)
 
-   def open_color_picker(self):
-       """Modified to handle only adding new color blobs"""
-       color = QtWidgets.QColorDialog.getColor(parent=self)
-       if color.isValid():
-           # Let user click where to place the blob
-           QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CrossCursor)
-           self.mixing_dish.waiting_for_blob_placement = True
-           self.mixing_dish.pending_blob_color = color
+        # multiple palettes
+        self.save_as_new_palette_btn = QtWidgets.QPushButton("Save As New Palette")
+        self.save_as_new_palette_btn.clicked.connect(self.save_as_new_palette)
+        left_panel.addWidget(self.save_as_new_palette_btn)
 
-   def set_maya_brush_color(self, qcolor):
-       r = qcolor.redF()
-       g = qcolor.greenF()
-       b = qcolor.blueF()
+        self.save_palette_btn = QtWidgets.QPushButton("Save Current Palette")
+        self.save_palette_btn.clicked.connect(self.save_current_palette)
+        self.save_palette_btn.setEnabled(False)  # initially disabled
+        left_panel.addWidget(self.save_palette_btn)
 
-       try:
-           current_ctx = cmds.currentCtx()
+        # palette thumbnails
+        self.saved_palette_manager = SavedPaletteManagerWidget()
+        self.saved_palette_manager.paletteSelected.connect(self.load_saved_palette)
+        left_panel.addWidget(self.saved_palette_manager)
 
-           # 1. Activate 3D Paint Tool if not already active
-           if not current_ctx.startswith("art3dPaintCtx") and current_ctx != "art3dPaintContext":
-               om.MGlobal.displayWarning("ChroMaya: 3D Paint Tool is not active. Switching to it now.")
-               cmds.Art3dPaintTool()
-               current_ctx = cmds.currentCtx()
+        # === RIGHT PANEL (Mixing Dish) ===
+        right_panel = QtWidgets.QVBoxLayout()
+        content_layout.addLayout(right_panel, 2)
 
-           # 2. Check if something paintable is selected
-           selection = cmds.ls(selection=True, long=True)
-           if not selection:
-               om.MGlobal.displayWarning("ChroMaya: No mesh selected. Select a mesh before painting.")
-               return
-           else:
-               shape = cmds.listRelatives(selection[0], shapes=True, fullPath=True)
-               if not shape or cmds.nodeType(shape[0]) != 'mesh':
-                   om.MGlobal.displayWarning("ChroMaya: Selection is not a paintable mesh.")
-                   return
-           # 3. Set brush color
-           if cmds.art3dPaintCtx(current_ctx, exists=True):
-               cmds.art3dPaintCtx(current_ctx, edit=True, rgb=(r, g, b))
-               om.MGlobal.displayInfo(f"ChroMaya: Brush color set to ({r:.2f}, {g:.2f}, {b:.2f}) ✅")
-           else:
-               om.MGlobal.displayWarning("ChroMaya: Paint context not found.")
-       except Exception as e:
-           om.MGlobal.displayError(f"ChroMaya: Failed to set brush color: {e}")
+        self.mixing_dish = MixingDishWidget()
+        self.mixing_dish.colorSelected.connect(self.set_maya_brush_color)
+        self.mixing_dish.colorSelected.connect(self.handle_mixing_dish_color)
+        right_panel.addWidget(self.mixing_dish)
 
-   def handle_history_color_selected(self, color):
-       """Handle when a color is selected from the history"""
-       self.handle_mixing_dish_color(color)
-       om.MGlobal.displayInfo(f"ChroMaya: Selected color from history: {color.name()}")
-       
-   def handle_mixing_dish_color(self, color):
-       """Handle when a color is selected from mixing dish"""
-       self.color_preview.setStyleSheet(
-           f"background-color: {color.name()}; border: 1px solid #aaa;"
-       )
-       self.color_history.addColor(color)
-       self.set_maya_brush_color(color)
+    def open_color_picker(self):
+        """Modified to handle only adding new color blobs"""
+        color = QtWidgets.QColorDialog.getColor(parent=self)
+        if color.isValid():
+            # Let user click where to place the blob
+            QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CrossCursor)
+            self.mixing_dish.waiting_for_blob_placement = True
+            self.mixing_dish.pending_blob_color = color
 
-   def undo_palette(self):
-       """Undo last palette action"""
-       success = self.mixing_dish.undo()
-       if success:
-           om.MGlobal.displayInfo("ChroMaya: Undid last palette action")
-       else:
-           om.MGlobal.displayInfo("ChroMaya: Nothing to undo")
+    def set_maya_brush_color(self, qcolor):
+        r = qcolor.redF()
+        g = qcolor.greenF()
+        b = qcolor.blueF()
 
-   def redo_palette(self):
-       """Redo last undone palette action"""
-       success = self.mixing_dish.redo()
-       if success:
-           om.MGlobal.displayInfo("ChroMaya: Redid last palette action")
-       else:
-           om.MGlobal.displayInfo("ChroMaya: Nothing to redo")
+        try:
+            current_ctx = cmds.currentCtx()
+
+            # 1. Activate 3D Paint Tool if not already active
+            if not current_ctx.startswith("art3dPaintCtx") and current_ctx != "art3dPaintContext":
+                om.MGlobal.displayWarning("ChroMaya: 3D Paint Tool is not active. Switching to it now.")
+                cmds.Art3dPaintTool()
+                current_ctx = cmds.currentCtx()
+
+            # 2. Check if something paintable is selected
+            selection = cmds.ls(selection=True, long=True)
+            if not selection:
+                om.MGlobal.displayWarning("ChroMaya: No mesh selected. Select a mesh before painting.")
+                return
+            else:
+                shape = cmds.listRelatives(selection[0], shapes=True, fullPath=True)
+                if not shape or cmds.nodeType(shape[0]) != 'mesh':
+                    om.MGlobal.displayWarning("ChroMaya: Selection is not a paintable mesh.")
+                    return
+            # 3. Set brush color
+            if cmds.art3dPaintCtx(current_ctx, exists=True):
+                cmds.art3dPaintCtx(current_ctx, edit=True, rgb=(r, g, b))
+                om.MGlobal.displayInfo(f"ChroMaya: Brush color set to ({r:.2f}, {g:.2f}, {b:.2f}) ✅")
+            else:
+                om.MGlobal.displayWarning("ChroMaya: Paint context not found.")
+        except Exception as e:
+            om.MGlobal.displayError(f"ChroMaya: Failed to set brush color: {e}")
+
+    def handle_history_color_selected(self, color):
+        """Handle when a color is selected from the history"""
+        self.handle_mixing_dish_color(color)
+        om.MGlobal.displayInfo(f"ChroMaya: Selected color from history: {color.name()}")
+        
+    def handle_mixing_dish_color(self, color):
+        """Handle when a color is selected from mixing dish"""
+        self.color_preview.setStyleSheet(
+            f"background-color: {color.name()}; border: 1px solid #aaa;"
+        )
+        self.color_history.addColor(color)
+        self.set_maya_brush_color(color)
+
+    def undo_palette(self):
+        """Undo last palette action"""
+        success = self.mixing_dish.undo()
+        if success:
+            om.MGlobal.displayInfo("ChroMaya: Undid last palette action")
+        else:
+            om.MGlobal.displayInfo("ChroMaya: Nothing to undo")
+
+    def redo_palette(self):
+        """Redo last undone palette action"""
+        success = self.mixing_dish.redo()
+        if success:
+            om.MGlobal.displayInfo("ChroMaya: Redid last palette action")
+        else:
+            om.MGlobal.displayInfo("ChroMaya: Nothing to redo")
+
+    def save_current_palette(self):
+        palette = self.mixing_dish.get_current_palette()
+        self.saved_palette_manager.update_last_saved(palette)
+        om.MGlobal.displayInfo("ChroMaya: Updated last saved palette ✅")
+
+    def save_as_new_palette(self):
+        name, ok = QtWidgets.QInputDialog.getText(self, "Save As New Palette", "Enter a name for this palette:")
+        if ok and name:
+            palette = self.mixing_dish.get_current_palette()
+            self.saved_palette_manager.add_palette(name, palette, mark_as_latest=True)
+            self.save_palette_btn.setEnabled(True)
+            om.MGlobal.displayInfo(f"ChroMaya: Saved new palette '{name}' ✅")
+
+
+
+    def load_saved_palette(self, palette_data):
+        self.mixing_dish.load_palette(palette_data)
+        om.MGlobal.displayInfo("ChroMaya: Loaded saved palette")
+
 
 # The command that shows the GUI
 class ChroMayaCommand(om.MPxCommand):
@@ -619,6 +793,4 @@ def uninitializePlugin(plugin):
        om.MGlobal.displayInfo("ChroMaya Plugin Unloaded.")
    except:
        om.MGlobal.displayError("Failed to unregister ChroMaya command.")
-
-
 
