@@ -5,6 +5,8 @@ import maya.cmds as cmds
 from PySide2 import QtWidgets, QtCore, QtGui
 from shiboken2 import wrapInstance
 import numpy as np
+import json
+import os
 
 plugin_name = "chroMayaUI"
 
@@ -16,6 +18,39 @@ def get_maya_main_window():
    main_window_ptr = omui.MQtUtil.mainWindow()
    return wrapInstance(int(main_window_ptr), QtWidgets.QWidget)
 
+# adding state persistence functions
+def get_state_file_path():
+    """Get the path to the state file"""
+    maya_app_dir = cmds.internalVar(userAppDir=True)
+    state_dir = os.path.join(maya_app_dir, "chroMaya")
+    if not os.path.exists(state_dir):
+        os.makedirs(state_dir)
+    return os.path.join(state_dir, "chroMaya_state.json")
+
+def save_state(palettes, color_history):
+    """Save the current state to a file"""
+    state = {
+        'palettes': palettes,
+        'color_history': [color.name() for color in color_history]
+    }
+    
+    try:
+        with open(get_state_file_path(), 'w') as f:
+            json.dump(state, f)
+        om.MGlobal.displayInfo("ChroMaya: State saved successfully")
+    except Exception as e:
+        om.MGlobal.displayError(f"ChroMaya: Failed to save state: {e}")
+
+def load_state():
+    """Load the state from file"""
+    try:
+        if os.path.exists(get_state_file_path()):
+            with open(get_state_file_path(), 'r') as f:
+                state = json.load(f)
+            return state
+    except Exception as e:
+        om.MGlobal.displayError(f"ChroMaya: Failed to load state: {e}")
+    return None
 
 class MixingDishWidget(QtWidgets.QWidget):
     colorSelected = QtCore.Signal(QtGui.QColor)
@@ -554,6 +589,53 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(central_widget)
         self.build_ui(central_widget)
         self.selected_colors = []
+        
+        # Load saved state
+        self.load_saved_state()
+        
+        # Set up auto-save timer
+        self.auto_save_timer = QtCore.QTimer(self)
+        self.auto_save_timer.timeout.connect(self.auto_save_state)
+        self.auto_save_timer.start(300000)  # Auto-save every 5 minutes
+        
+    def auto_save_state(self):
+        """Auto-save the current state"""
+        palettes = []
+        for i in range(self.saved_palette_manager.scroll_layout.count()):
+            thumb = self.saved_palette_manager.scroll_layout.itemAt(i).widget()
+            if thumb:
+                palettes.append({
+                    'name': thumb.name,
+                    'palette_data': thumb.palette_data
+                })
+        
+        color_history = self.color_history.colors
+        save_state(palettes, color_history)
+        
+    def load_saved_state(self):
+        """Load the saved state"""
+        state = load_state()
+        if state:
+            # Load palettes
+            for palette in state.get('palettes', []):
+                self.saved_palette_manager.add_palette(
+                    palette['name'],
+                    palette['palette_data'],
+                    mark_as_latest=False
+                )
+            
+            # Load color history
+            for color_name in state.get('color_history', []):
+                color = QtGui.QColor(color_name)
+                if color.isValid():
+                    self.color_history.addColor(color)
+            
+            om.MGlobal.displayInfo("ChroMaya: State loaded successfully")
+            
+    def closeEvent(self, event):
+        """Save state when window is closed"""
+        self.auto_save_state()
+        super().closeEvent(event)
 
     def build_ui(self, parent_widget):
         layout = QtWidgets.QVBoxLayout(parent_widget)
@@ -787,6 +869,12 @@ def initializePlugin(plugin):
 def uninitializePlugin(plugin):
    plugin_fn = om.MFnPlugin(plugin)
    try:
+       # Save state before unloading
+       for widget in QtWidgets.QApplication.allWidgets():
+           if isinstance(widget, ChroMayaWindow):
+               widget.auto_save_state()
+               break
+               
        plugin_fn.deregisterCommand(plugin_name)
        om.MGlobal.displayInfo("ChroMaya Plugin Unloaded.")
    except:

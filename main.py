@@ -108,6 +108,8 @@ class GLWidget(QOpenGLWidget):
         self.setMouseTracking(True)
         self.is_dragging = False
         self.selected_blob = None
+        self.is_color_sampling = False  # Track if we're in color sampling mode
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # Enable keyboard focus
         
     def get_main_window(self):
         """Get the main window instance."""
@@ -173,6 +175,31 @@ class GLWidget(QOpenGLWidget):
         pos = self.get_clip_space_position(event.pos())
         
         if event.button() == Qt.MouseButton.LeftButton:
+            if self.is_color_sampling:
+                # Calculate the field value at this position
+                field = 0.0
+                for blob in main_window.blobs:
+                    field += blob.get_influence(pos[0], pos[1])
+                
+                # Only sample if we're inside the metaball field
+                if field >= 0.5:  # Use same threshold as shader
+                    # Calculate the blended color at this position
+                    total_color = np.zeros(3)
+                    total_weight = 0.0
+                    
+                    for blob in main_window.blobs:
+                        influence = blob.get_influence(pos[0], pos[1])
+                        if influence > 0:
+                            total_color += blob.color * influence
+                            total_weight += influence
+                    
+                    if total_weight > 0:
+                        # Normalize the color
+                        main_window.current_brush_color = total_color / total_weight
+                        main_window.update_color_swatch()
+                        print(f"Sampled color: {main_window.current_brush_color}")  # Debug print
+                return
+                
             # Check if we clicked on an existing blob
             for blob in reversed(main_window.blobs):  # Check from newest to oldest
                 dx = pos[0] - blob.position[0]
@@ -203,6 +230,28 @@ class GLWidget(QOpenGLWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             self.is_dragging = False
             self.selected_blob = None
+            
+    def keyPressEvent(self, event):
+        """Handle key press events."""
+        if event.key() == Qt.Key.Key_Control:
+            self.is_color_sampling = True
+            self.setCursor(Qt.CursorShape.CrossCursor)
+            print("Color sampling mode enabled")  # Debug print
+            
+    def keyReleaseEvent(self, event):
+        """Handle key release events."""
+        if event.key() == Qt.Key.Key_Control:
+            self.is_color_sampling = False
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            print("Color sampling mode disabled")  # Debug print
+            
+    def enterEvent(self, event):
+        """Handle mouse enter events."""
+        self.setFocus()  # Get keyboard focus when mouse enters widget
+        
+    def leaveEvent(self, event):
+        """Handle mouse leave events."""
+        self.clearFocus()  # Release keyboard focus when mouse leaves widget
             
     def mouseDoubleClickEvent(self, event):
         main_window = self.get_main_window()
