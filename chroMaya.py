@@ -27,11 +27,36 @@ def get_state_file_path():
         os.makedirs(state_dir)
     return os.path.join(state_dir, "chroMaya_state.json")
 
+def serialize_point(point):
+    """Convert QPoint to serializable dict"""
+    return {'x': point.x(), 'y': point.y()}
+
+def serialize_color(color):
+    """Convert QColor to serializable string"""
+    return color.name()
+
+def serialize_palette_data(palette_data):
+    """Convert palette data to serializable format"""
+    serialized = []
+    for blob in palette_data:
+        serialized.append({
+            'pos': serialize_point(blob['pos']),
+            'color': serialize_color(blob['color']),
+            'radius': blob['radius']
+        })
+    return serialized
+
 def save_state(palettes, color_history):
     """Save the current state to a file"""
     state = {
-        'palettes': palettes,
-        'color_history': [color.name() for color in color_history]
+        'palettes': [
+            {
+                'name': palette['name'],
+                'palette_data': serialize_palette_data(palette['palette_data'])
+            }
+            for palette in palettes
+        ],
+        'color_history': [serialize_color(color) for color in color_history]
     }
     
     try:
@@ -41,12 +66,42 @@ def save_state(palettes, color_history):
     except Exception as e:
         om.MGlobal.displayError(f"ChroMaya: Failed to save state: {e}")
 
+def deserialize_point(point_dict):
+    """Convert serialized point dict back to QPoint"""
+    return QtCore.QPoint(point_dict['x'], point_dict['y'])
+
+def deserialize_color(color_str):
+    """Convert serialized color string back to QColor"""
+    return QtGui.QColor(color_str)
+
+def deserialize_palette_data(palette_data):
+    """Convert serialized palette data back to original format"""
+    deserialized = []
+    for blob in palette_data:
+        deserialized.append({
+            'pos': deserialize_point(blob['pos']),
+            'color': deserialize_color(blob['color']),
+            'radius': blob['radius']
+        })
+    return deserialized
+
 def load_state():
     """Load the state from file"""
     try:
         if os.path.exists(get_state_file_path()):
             with open(get_state_file_path(), 'r') as f:
                 state = json.load(f)
+                
+            # Convert serialized data back to original format
+            if state:
+                state['palettes'] = [
+                    {
+                        'name': palette['name'],
+                        'palette_data': deserialize_palette_data(palette['palette_data'])
+                    }
+                    for palette in state['palettes']
+                ]
+                state['color_history'] = [deserialize_color(color) for color in state['color_history']]
             return state
     except Exception as e:
         om.MGlobal.displayError(f"ChroMaya: Failed to load state: {e}")
@@ -597,7 +652,7 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
         self.auto_save_timer = QtCore.QTimer(self)
         self.auto_save_timer.timeout.connect(self.auto_save_state)
         self.auto_save_timer.start(300000)  # Auto-save every 5 minutes
-        
+
     def auto_save_state(self):
         """Auto-save the current state"""
         palettes = []
@@ -640,11 +695,39 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
     def build_ui(self, parent_widget):
         layout = QtWidgets.QVBoxLayout(parent_widget)
 
+        # Title and Save Button Layout
+        title_layout = QtWidgets.QHBoxLayout()
+        
         # Title
         title_label = QtWidgets.QLabel("ChroMaya")
         title_label.setStyleSheet("font-size: 20px; font-weight: bold;")
-        title_label.setAlignment(QtCore.Qt.AlignLeft)
-        layout.addWidget(title_label)
+        title_layout.addWidget(title_label)
+        
+        # Add spacer to push save button to the right
+        title_layout.addStretch()
+        
+        # Save State Button
+        self.save_state_btn = QtWidgets.QPushButton("Save State")
+        self.save_state_btn.setToolTip("Save current palettes and color history")
+        self.save_state_btn.clicked.connect(self.manual_save_state)
+        self.save_state_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                padding: 5px 10px;
+                border-radius: 3px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+            QPushButton:pressed {
+                background-color: #3d8b40;
+            }
+        """)
+        title_layout.addWidget(self.save_state_btn)
+        
+        layout.addLayout(title_layout)
 
         # Horizontal layout for left/right panels
         content_layout = QtWidgets.QHBoxLayout()
@@ -833,6 +916,24 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
     def load_saved_palette(self, palette_data):
         self.mixing_dish.load_palette(palette_data)
         om.MGlobal.displayInfo("ChroMaya: Loaded saved palette")
+
+    def manual_save_state(self):
+        """Manually save the current state"""
+        palettes = []
+        for i in range(self.saved_palette_manager.scroll_layout.count()):
+            thumb = self.saved_palette_manager.scroll_layout.itemAt(i).widget()
+            if thumb:
+                palettes.append({
+                    'name': thumb.name,
+                    'palette_data': thumb.palette_data
+                })
+        
+        color_history = self.color_history.colors
+        save_state(palettes, color_history)
+        
+        # Show a temporary success message
+        self.save_state_btn.setText("Saved!")
+        QtCore.QTimer.singleShot(2000, lambda: self.save_state_btn.setText("Save State"))
 
 
 # The command that shows the GUI
