@@ -2,6 +2,7 @@ import sys
 import maya.api.OpenMaya as om
 from maya import OpenMayaUI as omui
 import maya.cmds as cmds
+import maya.mel as mel
 from PySide2 import QtWidgets, QtCore, QtGui
 from shiboken2 import wrapInstance
 import numpy as np
@@ -1017,7 +1018,7 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
 
         # Automatically open 3D Paint Tool settings on plugin launch
         if not cmds.art3dPaintCtx('art3dPaintContext', exists=True):
-            cmds.art3dPaintCtx('art3dPaintContext', t='art3dPaintCtx')
+            cmds.art3dPaintCtx('art3dPaintContext')
 
         cmds.setToolTo('art3dPaintContext')
         cmds.ToolSettingsWindow()
@@ -1027,7 +1028,8 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
         palettes = []
         for i in range(self.saved_palette_manager.scroll_layout.count()):
             thumb = self.saved_palette_manager.scroll_layout.itemAt(i).widget()
-            if thumb:
+            # Only include PaletteThumbnailWidgets, not NewPaletteButton
+            if thumb and isinstance(thumb, PaletteThumbnailWidget) and hasattr(thumb, 'name'):
                 palettes.append({
                     'name': thumb.name,
                     'palette_data': thumb.palette_data
@@ -1434,7 +1436,7 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
             for i in range(self.saved_palette_manager.scroll_layout.count()):
                 try:
                     thumb = self.saved_palette_manager.scroll_layout.itemAt(i).widget()
-                    if thumb:
+                    if thumb and isinstance(thumb, PaletteThumbnailWidget) and hasattr(thumb, 'name'):
                         palettes.append({
                             'name': thumb.name,
                             'palette_data': thumb.palette_data
@@ -1499,7 +1501,9 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
                 item = self.saved_palette_manager.scroll_layout.itemAt(i)
                 if item and item.widget():
                     thumb = item.widget()
-                    existing_names.add(thumb.name)
+                    # Only access 'name' if it's a PaletteThumbnailWidget, not a NewPaletteButton
+                    if isinstance(thumb, PaletteThumbnailWidget) and hasattr(thumb, 'name'):
+                        existing_names.add(thumb.name)
             
             # Add new palettes (but don't replace existing ones with same name)
             palettes_added = 0
@@ -1529,7 +1533,7 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
                 if count > 0:
                     # Set the last added palette as active
                     last_added = self.saved_palette_manager.scroll_layout.itemAt(count - 1).widget()
-                    if last_added:
+                    if last_added and isinstance(last_added, PaletteThumbnailWidget):
                         self.saved_palette_manager.mark_active_thumb(last_added)
                         self.mixing_dish.load_palette(last_added.palette_data)
             
