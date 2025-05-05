@@ -586,7 +586,7 @@ class SavedPaletteManagerWidget(QtWidgets.QWidget):
         self.scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOn)
         self.scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.scroll_area.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        self.scroll_area.setFixedHeight(110)  # Adjust height to fit your thumbnails
+        self.scroll_area.setFixedHeight(80)  # Adjust height to fit your thumbnails
 
         self.layout.addWidget(self.scroll_area)
         
@@ -777,7 +777,7 @@ class PaletteThumbnailWidget(QtWidgets.QFrame):
 
     def __init__(self, name, palette_data, parent=None):
         super().__init__(parent)
-        self.setFixedSize(70, 70)
+        self.setFixedSize(50, 50)
         self.name = name
         
         # Validate palette data
@@ -923,7 +923,7 @@ class NewPaletteButton(QtWidgets.QFrame):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(70, 70)
+        self.setFixedSize(50, 50)
         self.setCursor(QtCore.Qt.PointingHandCursor)
         self.setStyleSheet("""
             QFrame {
@@ -1014,6 +1014,13 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
         self.auto_save_timer = QtCore.QTimer(self)
         self.auto_save_timer.timeout.connect(self.auto_save_state)
         self.auto_save_timer.start(300000)  # Auto-save every 5 minutes
+
+        # Automatically open 3D Paint Tool settings on plugin launch
+        if not cmds.art3dPaintCtx('art3dPaintContext', exists=True):
+            cmds.art3dPaintCtx('art3dPaintContext', t='art3dPaintCtx')
+
+        cmds.setToolTo('art3dPaintContext')
+        cmds.ToolSettingsWindow()
 
     def auto_save_state(self):
         """Auto-save the current state"""
@@ -1160,6 +1167,11 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
         # === LEFT PANEL ===
         left_panel = QtWidgets.QVBoxLayout()
         content_layout.addLayout(left_panel, 1)
+
+        # Add Import Paintable Mesh button (from new implementation)
+        import_mesh_btn = QtWidgets.QPushButton("Import Paintable Mesh")
+        import_mesh_btn.clicked.connect(self.import_paintable_mesh)
+        left_panel.addWidget(import_mesh_btn)
 
         # Add Color Blobs Section
         add_color_label = QtWidgets.QLabel("Add Color Blobs:")
@@ -1630,6 +1642,84 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
             self.export_palette_btn.setText("Export Failed!")
             QtCore.QTimer.singleShot(2000, lambda: self.export_palette_btn.setText("Export Palette"))
 
+    def import_paintable_mesh(self):
+        """Import a 3D mesh and prepare it for painting"""
+        # 1. Open file dialog
+        mesh_path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Import Mesh", "", "3D Files (*.obj *.fbx *.ma)")
+        if not mesh_path:
+            return
+
+        # 2. Import mesh at origin
+        before_import = set(cmds.ls(geometry=True))
+        cmds.file(mesh_path, i=True, ignoreVersion=True, ra=True, mergeNamespacesOnClash=False, namespace="chroMesh", options="mo=1", pr=True)
+        after_import = set(cmds.ls(geometry=True))
+        new_meshes = list(after_import - before_import)
+        if not new_meshes:
+            om.MGlobal.displayError("No geometry found in import.")
+            return
+
+        mesh = new_meshes[0]
+        cmds.select(mesh)
+        cmds.move(0, 0, 0, mesh)
+
+        # 3. Create new shader and file texture
+        shader = cmds.shadingNode('lambert', asShader=True, name="chroShader")
+        shading_group = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name="chroSG")
+        cmds.connectAttr(f"{shader}.outColor", f"{shading_group}.surfaceShader", force=True)
+
+        file_node = cmds.shadingNode('file', asTexture=True, name="chroFileTexture")
+        place2d = cmds.shadingNode('place2dTexture', asUtility=True)
+        cmds.connectAttr(f"{place2d}.outUV", f"{file_node}.uvCoord")
+        cmds.connectAttr(f"{place2d}.outUvFilterSize", f"{file_node}.uvFilterSize")
+
+        # 4. Create temp texture file
+        texture_path = cmds.workspace(q=True, rd=True) + "images/chroTempTexture.png"
+        if not os.path.exists(os.path.dirname(texture_path)):
+            os.makedirs(os.path.dirname(texture_path))
+        image = QtGui.QImage(1024, 1024, QtGui.QImage.Format_RGB32)
+        image.fill(QtGui.QColor("white"))
+        image.save(texture_path)
+
+        cmds.setAttr(f"{file_node}.fileTextureName", texture_path, type="string")
+        cmds.connectAttr(f"{file_node}.outColor", f"{shader}.color")
+
+        # 5. Assign material to mesh
+        cmds.select(mesh)
+        cmds.hyperShade(assign=shader)
+
+        # Force set mesh to show texture
+        cmds.polyOptions(mesh, colorShadedDisplay=True)
+        cmds.setAttr(mesh + ".displayColors", 1)
+
+        # Set up 3D Paint Context
+        if not cmds.art3dPaintCtx('art3dPaintContext', exists=True):
+            cmds.art3dPaintCtx('art3dPaintContext', t='art3dPaintCtx')
+
+        # Activate paint tool
+        cmds.setToolTo('art3dPaintContext')
+
+        # Now explicitly assign the mesh and its file texture to the paint context
+        cmds.art3dPaintCtx('art3dPaintContext', edit=True,
+            selProj=True,
+            paintMode="attrib",
+            colorMode="diffuse",  # or 'combined' if needed
+            assignFile=True,
+            targetSurfaces=mesh,
+            fileTextures=[file_node],  # needs name of the file texture node
+        )
+
+        # 6. Connect texture to the 3D Paint Tool
+        cmds.select(mesh)
+        cmds.art3dPaintCtx('art3dPaintContext', edit=True, 
+                        colorMode='diffuse',
+                        paintTexture=texture_path)
+
+        om.MGlobal.displayInfo(f"ChroMaya: Imported and prepared {mesh} for painting 🎨")
+
+        # Open the 3D Paint Tool panel
+        cmds.ToolSettingsWindow()
+        cmds.setToolTo('art3dPaintContext')
+
 # The command that shows the GUI
 class ChroMayaCommand(om.MPxCommand):
    def __init__(self):
@@ -1674,4 +1764,47 @@ def uninitializePlugin(plugin):
        om.MGlobal.displayInfo("ChroMaya Plugin Unloaded.")
    except:
        om.MGlobal.displayError("Failed to unregister ChroMaya command.")
+
+def show_chromaya_dock():
+    """Show ChroMaya as a dockable panel in Maya"""
+    import maya.cmds as cmds
+    from maya import OpenMayaUI as omui
+    from shiboken2 import wrapInstance
+    from PySide2 import QtWidgets
+
+    dock_name = "ChroMayaDockable"
+
+    # Step 1: Safely remove old dock if it exists
+    if cmds.workspaceControl(dock_name, q=True, exists=True):
+        try:
+            cmds.deleteUI(dock_name, control=True)
+        except:
+            cmds.deleteUI(dock_name)
+        try:
+            cmds.workspaceControlState(dock_name, remove=True)
+        except:
+            pass
+
+    # Step 2: Create the workspaceControl FIRST (empty container)
+    cmds.workspaceControl(dock_name,
+                          label="ChroMaya",
+                          retain=False,
+                          loadImmediately=True)
+
+    # Step 3: Find the workspaceControl's Qt widget
+    from maya.OpenMayaUI import MQtUtil
+    from shiboken2 import wrapInstance
+    from PySide2.QtWidgets import QWidget
+
+    control_ptr = MQtUtil.findControl(dock_name)
+    if control_ptr is None:
+        print("Error: Could not find dock control.")
+        return
+
+    dock_qwidget = wrapInstance(int(control_ptr), QWidget)
+
+    # Step 4: Add your custom widget (AFTER dock exists!)
+    plugin_widget = ChroMayaWindow()
+    plugin_widget.setObjectName("ChroMayaUI")
+    dock_qwidget.layout().addWidget(plugin_widget)
 
