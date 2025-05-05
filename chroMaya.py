@@ -1217,20 +1217,22 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
         left_panel.addWidget(divider)
 
         # === Palette History ===
-        palette_history_label = QtWidgets.QLabel("Palette History")
+        undo_redo_layout = QtWidgets.QHBoxLayout()
+        palette_history_label = QtWidgets.QLabel("Palette History:")
         palette_history_label.setStyleSheet("font-weight: bold; margin-top: 1px;")
         left_panel.addWidget(palette_history_label)
 
-        undo_button = QtWidgets.QPushButton("Undo Mixing Dish Action")
+        undo_button = QtWidgets.QPushButton("Undo")
         undo_button.setToolTip("Undo last palette change")
         undo_button.clicked.connect(self.undo_palette)
+        undo_redo_layout.addWidget(undo_button)
         
-        redo_button = QtWidgets.QPushButton("Redo Mixing Dish Action")
+        redo_button = QtWidgets.QPushButton("Redo")
         redo_button.setToolTip("Redo last undone palette change")
         redo_button.clicked.connect(self.redo_palette)
+        undo_redo_layout.addWidget(redo_button)
         
-        left_panel.addWidget(undo_button)
-        left_panel.addWidget(redo_button)
+        left_panel.addLayout(undo_redo_layout)
 
         # multiple palettes
         self.save_as_new_palette_btn = QtWidgets.QPushButton("Save As New Palette")
