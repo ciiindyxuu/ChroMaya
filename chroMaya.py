@@ -1662,63 +1662,103 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
         cmds.select(mesh)
         cmds.move(0, 0, 0, mesh)
 
-        # 3. Create new shader and file texture
+        # 3. Create UV map if needed
+        if not cmds.polyEvaluate(mesh, uvcoord=True):
+            cmds.polyAutoProjection(mesh, constructionHistory=0, layout=1)
+            om.MGlobal.displayInfo(f"ChroMaya: Created UV mapping for {mesh}")
+
+        # 4. Create shader and texture
         shader = cmds.shadingNode('lambert', asShader=True, name="chroShader")
         shading_group = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name="chroSG")
         cmds.connectAttr(f"{shader}.outColor", f"{shading_group}.surfaceShader", force=True)
 
         file_node = cmds.shadingNode('file', asTexture=True, name="chroFileTexture")
         place2d = cmds.shadingNode('place2dTexture', asUtility=True)
-        cmds.connectAttr(f"{place2d}.outUV", f"{file_node}.uvCoord")
-        cmds.connectAttr(f"{place2d}.outUvFilterSize", f"{file_node}.uvFilterSize")
+        
+        # Connect place2d to file
+        cmds.connectAttr(f"{place2d}.outUV", f"{file_node}.uvCoord", force=True)
+        cmds.connectAttr(f"{place2d}.outUvFilterSize", f"{file_node}.uvFilterSize", force=True)
+        
+        # Connect standard place2d attributes
+        for attr in ["coverage", "translateFrame", "rotateFrame", "mirrorU", "mirrorV", 
+                    "stagger", "wrapU", "wrapV", "repeatUV", "offset", "rotateUV", 
+                    "noiseUV", "vertexUvOne", "vertexUvTwo", "vertexUvThree"]:
+            cmds.connectAttr(f"{place2d}.{attr}", f"{file_node}.{attr}", force=True)
 
-        # 4. Create temp texture file
-        texture_path = cmds.workspace(q=True, rd=True) + "images/chroTempTexture.png"
-        if not os.path.exists(os.path.dirname(texture_path)):
-            os.makedirs(os.path.dirname(texture_path))
+        # 5. Create texture file
+        workspace = cmds.workspace(q=True, rootDirectory=True)
+        texture_path = os.path.join(workspace, "sourceimages", "chroMayaTexture.png")
+        texture_dir = os.path.dirname(texture_path)
+        
+        if not os.path.exists(texture_dir):
+            os.makedirs(texture_dir)
+        
+        # Create white texture
         image = QtGui.QImage(1024, 1024, QtGui.QImage.Format_RGB32)
         image.fill(QtGui.QColor("white"))
         image.save(texture_path)
-
+        
+        # Set the file texture
         cmds.setAttr(f"{file_node}.fileTextureName", texture_path, type="string")
         cmds.connectAttr(f"{file_node}.outColor", f"{shader}.color")
 
-        # 5. Assign material to mesh
+        # 6. Assign shader to mesh
         cmds.select(mesh)
         cmds.hyperShade(assign=shader)
-
-        # Force set mesh to show texture
+        
+        # Make sure the mesh displays texture
         cmds.polyOptions(mesh, colorShadedDisplay=True)
-        cmds.setAttr(mesh + ".displayColors", 1)
+        cmds.setAttr(f"{mesh}.displayColors", 1)
 
-        # Set up 3D Paint Context
-        if not cmds.art3dPaintCtx('art3dPaintContext', exists=True):
-            cmds.art3dPaintCtx('art3dPaintContext', t='art3dPaintCtx')
+        # 7. Use a simpler approach to 3D Paint Tool setup using MEL
+        try:
+            # The most reliable way to set up 3D Paint Tool
+            cmds.select(mesh)
+            
+            # Create a new 3D Paint context
+            if cmds.art3dPaintCtx('art3dPaintContext', exists=True):
+                cmds.deleteUI('art3dPaintContext')
+            
+            # Create the context without any parameters that could cause issues
+            cmds.art3dPaintCtx('art3dPaintContext')
+            
+            # Switch to the tool
+            cmds.setToolTo('art3dPaintContext')
+            
+            # Execute MEL commands that are known to work
+            mel.eval('Art3dPaintToolOptions')
+            mel.eval('artSetToolAndSelectAttr("artAttrCtx", "art3dPaintContext");')
+            
+            # Try to set up texture painting directly with MEL
+            try:
+                mel.eval(f'art3dPaintSetup("{file_node}", "textured", "{mesh}");')
+                om.MGlobal.displayInfo("ChroMaya: Set up texture painting with MEL")
+            except:
+                om.MGlobal.displayWarning("ChroMaya: Could not set up texture painting with MEL")
+            
+            # Set the RGB color to apply
+            try:
+                # This is the most reliable way to set the brush color
+                cmds.colorSliderGrp('colorSlider', edit=True, rgbValue=(1.0, 1.0, 1.0))
+                om.MGlobal.displayInfo("ChroMaya: Set initial brush color to white")
+            except:
+                om.MGlobal.displayWarning("ChroMaya: Could not set initial brush color")
+            
+            # Open the Attribute Editor to help with configuration
+            mel.eval('openAEWindow')
+            
+            # And show the Tool Settings window
+            cmds.ToolSettingsWindow()
+            
+            # Select mesh again to ensure it's ready for painting
+            cmds.select(mesh)
+            
+            om.MGlobal.displayInfo(f"ChroMaya: Imported {mesh} ready for 3D painting")
+            om.MGlobal.displayInfo(f"ChroMaya: Texture path: {texture_path}")
+            
+        except Exception as e:
+            om.MGlobal.displayError(f"ChroMaya: Error setting up 3D Paint Tool: {e}")
 
-        # Activate paint tool
-        cmds.setToolTo('art3dPaintContext')
-
-        # Now explicitly assign the mesh and its file texture to the paint context
-        cmds.art3dPaintCtx('art3dPaintContext', edit=True,
-            selProj=True,
-            paintMode="attrib",
-            colorMode="diffuse",  # or 'combined' if needed
-            assignFile=True,
-            targetSurfaces=mesh,
-            fileTextures=[file_node],  # needs name of the file texture node
-        )
-
-        # 6. Connect texture to the 3D Paint Tool
-        cmds.select(mesh)
-        cmds.art3dPaintCtx('art3dPaintContext', edit=True, 
-                        colorMode='diffuse',
-                        paintTexture=texture_path)
-
-        om.MGlobal.displayInfo(f"ChroMaya: Imported and prepared {mesh} for painting 🎨")
-
-        # Open the 3D Paint Tool panel
-        cmds.ToolSettingsWindow()
-        cmds.setToolTo('art3dPaintContext')
 
 # The command that shows the GUI
 class ChroMayaCommand(om.MPxCommand):
