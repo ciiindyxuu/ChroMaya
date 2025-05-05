@@ -48,21 +48,32 @@ def serialize_palette_data(palette_data):
 
 def save_state(palettes, color_history):
     """Save the current state to a file"""
-    state = {
-        'palettes': [
-            {
-                'name': palette['name'],
-                'palette_data': serialize_palette_data(palette['palette_data'])
+    # Convert QPoint objects to dictionaries
+    serializable_palettes = []
+    for palette in palettes:
+        serializable_palette = {
+            'name': palette['name'],
+            'palette_data': []
+        }
+        for blob in palette['palette_data']:
+            serializable_blob = {
+                'pos': {'x': blob['pos'].x(), 'y': blob['pos'].y()},
+                'color': blob['color'].name(),
+                'radius': blob['radius']
             }
-            for palette in palettes
-        ],
-        'color_history': [serialize_color(color) for color in color_history]
+            serializable_palette['palette_data'].append(serializable_blob)
+        serializable_palettes.append(serializable_palette)
+    
+    state = {
+        'palettes': serializable_palettes,
+        'color_history': [color.name() for color in color_history]
     }
     
     try:
-        with open(get_state_file_path(), 'w') as f:
+        state_path = get_state_file_path()
+        with open(state_path, 'w') as f:
             json.dump(state, f)
-        om.MGlobal.displayInfo("ChroMaya: State saved successfully")
+        om.MGlobal.displayInfo(f"ChroMaya: State saved successfully to {state_path}")
     except Exception as e:
         om.MGlobal.displayError(f"ChroMaya: Failed to save state: {e}")
 
@@ -88,20 +99,10 @@ def deserialize_palette_data(palette_data):
 def load_state():
     """Load the state from file"""
     try:
-        if os.path.exists(get_state_file_path()):
-            with open(get_state_file_path(), 'r') as f:
+        state_path = get_state_file_path()
+        if os.path.exists(state_path):
+            with open(state_path, 'r') as f:
                 state = json.load(f)
-                
-            # Convert serialized data back to original format
-            if state:
-                state['palettes'] = [
-                    {
-                        'name': palette['name'],
-                        'palette_data': deserialize_palette_data(palette['palette_data'])
-                    }
-                    for palette in state['palettes']
-                ]
-                state['color_history'] = [deserialize_color(color) for color in state['color_history']]
             return state
     except Exception as e:
         om.MGlobal.displayError(f"ChroMaya: Failed to load state: {e}")
@@ -703,8 +704,30 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
         title_label.setStyleSheet("font-size: 20px; font-weight: bold;")
         title_layout.addWidget(title_label)
         
-        # Add spacer to push save button to the right
+        # Add spacer to push buttons to the right
         title_layout.addStretch()
+        
+        # Import State Button
+        self.import_state_btn = QtWidgets.QPushButton("Import State")
+        self.import_state_btn.setToolTip("Import palettes and color history from a file")
+        self.import_state_btn.clicked.connect(self.import_state)
+        self.import_state_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                padding: 5px 10px;
+                border-radius: 3px;
+                margin-right: 5px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+            QPushButton:pressed {
+                background-color: #1565C0;
+            }
+        """)
+        title_layout.addWidget(self.import_state_btn)
         
         # Save State Button
         self.save_state_btn = QtWidgets.QPushButton("Save State")
@@ -931,9 +954,75 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
         color_history = self.color_history.colors
         save_state(palettes, color_history)
         
-        # Show a temporary success message
+        # Show a temporary success message with the path
+        state_path = get_state_file_path()
         self.save_state_btn.setText("Saved!")
+        om.MGlobal.displayInfo(f"ChroMaya: State saved to {state_path}")
         QtCore.QTimer.singleShot(2000, lambda: self.save_state_btn.setText("Save State"))
+
+    def import_state(self):
+        """Import state from a file"""
+        try:
+            # Get the default directory (Maya user directory)
+            default_dir = os.path.dirname(get_state_file_path())
+            
+            # Open file dialog
+            file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+                self,
+                "Import ChroMaya State",
+                default_dir,
+                "JSON Files (*.json);;All Files (*.*)"
+            )
+            
+            if file_path:
+                # Read and parse the state file
+                with open(file_path, 'r') as f:
+                    state = json.load(f)
+                
+                # Clear current state
+                self.saved_palette_manager.scroll_layout.clear()
+                self.color_history.colors.clear()
+                
+                # Load palettes
+                for palette in state.get('palettes', []):
+                    # Convert the serialized data back to QPoint and QColor
+                    palette_data = []
+                    for blob in palette['palette_data']:
+                        pos = QtCore.QPoint(blob['pos']['x'], blob['pos']['y'])
+                        color = QtGui.QColor(blob['color'])
+                        palette_data.append({
+                            'pos': pos,
+                            'color': color,
+                            'radius': blob['radius']
+                        })
+                    
+                    self.saved_palette_manager.add_palette(
+                        palette['name'],
+                        palette_data,
+                        mark_as_latest=False
+                    )
+                
+                # Load color history
+                for color_name in state.get('color_history', []):
+                    color = QtGui.QColor(color_name)
+                    if color.isValid():
+                        self.color_history.addColor(color)
+                
+                # Update the mixing dish with the first palette if available
+                if state.get('palettes'):
+                    first_palette = state['palettes'][0]['palette_data']
+                    self.mixing_dish.load_palette(first_palette)
+                
+                om.MGlobal.displayInfo(f"ChroMaya: State imported successfully from {file_path}")
+                
+                # Show temporary success message
+                self.import_state_btn.setText("Imported!")
+                QtCore.QTimer.singleShot(2000, lambda: self.import_state_btn.setText("Import State"))
+                
+        except Exception as e:
+            om.MGlobal.displayError(f"ChroMaya: Failed to import state: {e}")
+            self.import_state_btn.setText("Import Failed!")
+            QtCore.QTimer.singleShot(2000, lambda: self.import_state_btn.setText("Import State"))
 
 
 # The command that shows the GUI
