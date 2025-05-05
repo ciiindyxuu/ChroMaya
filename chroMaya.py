@@ -1175,15 +1175,6 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
         import_mesh_btn.clicked.connect(self.import_paintable_mesh)
         left_panel.addWidget(import_mesh_btn)
 
-        # Add Color Blobs Section
-        add_color_label = QtWidgets.QLabel("Add Color Blobs:")
-        left_panel.addWidget(add_color_label)
-        add_color_label.setStyleSheet("font-weight: bold;")
-
-        color_instructions = QtWidgets.QLabel("Click anywhere on the mixing dish to add a\ncolor blob")
-        color_instructions.setStyleSheet("font-size: 10px; color: #666;")
-        left_panel.addWidget(color_instructions)
-
         # === Divider Line ===
         divider = QtWidgets.QFrame()
         divider.setFrameShape(QtWidgets.QFrame.HLine)
@@ -1196,7 +1187,7 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
         left_panel.addWidget(swatch_label)
 
         swatch_instructions = QtWidgets.QLabel("Shift + Left Click anywhere on the mixing dish\nto sample colors")
-        swatch_instructions.setStyleSheet("font-size: 10px; color: #666;")
+        swatch_instructions.setStyleSheet("font-size: 10px; color: #888;")
         left_panel.addWidget(swatch_instructions)
 
         self.color_preview = QtWidgets.QLabel()
@@ -1228,20 +1219,22 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
         left_panel.addWidget(divider)
 
         # === Palette History ===
-        palette_history_label = QtWidgets.QLabel("Palette History")
+        undo_redo_layout = QtWidgets.QHBoxLayout()
+        palette_history_label = QtWidgets.QLabel("Palette History:")
         palette_history_label.setStyleSheet("font-weight: bold; margin-top: 1px;")
         left_panel.addWidget(palette_history_label)
 
-        undo_button = QtWidgets.QPushButton("Undo Mixing Dish Action")
+        undo_button = QtWidgets.QPushButton("Undo")
         undo_button.setToolTip("Undo last palette change")
         undo_button.clicked.connect(self.undo_palette)
+        undo_redo_layout.addWidget(undo_button)
         
-        redo_button = QtWidgets.QPushButton("Redo Mixing Dish Action")
+        redo_button = QtWidgets.QPushButton("Redo")
         redo_button.setToolTip("Redo last undone palette change")
         redo_button.clicked.connect(self.redo_palette)
+        undo_redo_layout.addWidget(redo_button)
         
-        left_panel.addWidget(undo_button)
-        left_panel.addWidget(redo_button)
+        left_panel.addLayout(undo_redo_layout)
 
         # multiple palettes
         self.save_as_new_palette_btn = QtWidgets.QPushButton("Save As New Palette")
