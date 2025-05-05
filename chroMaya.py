@@ -1173,15 +1173,6 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
         import_mesh_btn.clicked.connect(self.import_paintable_mesh)
         left_panel.addWidget(import_mesh_btn)
 
-        # Add Color Blobs Section
-        add_color_label = QtWidgets.QLabel("Add Color Blobs:")
-        left_panel.addWidget(add_color_label)
-        add_color_label.setStyleSheet("font-weight: bold;")
-
-        color_instructions = QtWidgets.QLabel("Click anywhere on the mixing dish to add a\ncolor blob")
-        color_instructions.setStyleSheet("font-size: 10px; color: #666;")
-        left_panel.addWidget(color_instructions)
-
         # === Divider Line ===
         divider = QtWidgets.QFrame()
         divider.setFrameShape(QtWidgets.QFrame.HLine)
@@ -1194,7 +1185,7 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
         left_panel.addWidget(swatch_label)
 
         swatch_instructions = QtWidgets.QLabel("Shift + Left Click anywhere on the mixing dish\nto sample colors")
-        swatch_instructions.setStyleSheet("font-size: 10px; color: #666;")
+        swatch_instructions.setStyleSheet("font-size: 10px; color: #888;")
         left_panel.addWidget(swatch_instructions)
 
         self.color_preview = QtWidgets.QLabel()
