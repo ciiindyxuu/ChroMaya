@@ -1640,121 +1640,74 @@ class ChroMayaWindow(QtWidgets.QMainWindow):
             QtCore.QTimer.singleShot(2000, lambda: self.export_palette_btn.setText("Export Palette"))
 
     def import_paintable_mesh(self):
-        """Import a 3D mesh and prepare it for painting"""
-        # 1. Open file dialog
+        """Import a 3D mesh and prepare it for painting using the 3D Paint Tool"""
+
+        # Step 1: Get file path from user
         mesh_path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Import Mesh", "", "3D Files (*.obj *.fbx *.ma)")
         if not mesh_path:
             return
 
-        # 2. Import mesh at origin
-        before_import = set(cmds.ls(geometry=True))
-        cmds.file(mesh_path, i=True, ignoreVersion=True, ra=True, mergeNamespacesOnClash=False, namespace="chroMesh", options="mo=1", pr=True)
-        after_import = set(cmds.ls(geometry=True))
-        new_meshes = list(after_import - before_import)
+        # Step 2: Import mesh and group at origin
+        before = set(cmds.ls(geometry=True))
+        cmds.file(mesh_path, i=True, ignoreVersion=True, ra=True, mergeNamespacesOnClash=False,
+                namespace="chroMesh", options="mo=1", pr=True)
+        after = set(cmds.ls(geometry=True))
+        new_meshes = list(after - before)
+
         if not new_meshes:
-            om.MGlobal.displayError("No geometry found in import.")
+            om.MGlobal.displayError("ChroMaya: No new geometry found.")
             return
 
-        mesh = new_meshes[0]
-        cmds.select(mesh)
-        cmds.move(0, 0, 0, mesh)
+        group_name = cmds.group(new_meshes, name="chroMayaMesh_grp")
+        cmds.xform(group_name, ws=True, t=(0, 0, 0))
+        cmds.select(group_name)
 
-        # 3. Create UV map if needed
-        if not cmds.polyEvaluate(mesh, uvcoord=True):
-            cmds.polyAutoProjection(mesh, constructionHistory=0, layout=1)
-            om.MGlobal.displayInfo(f"ChroMaya: Created UV mapping for {mesh}")
+        # Step 3: Gather valid mesh shapes under the group
+        shape_nodes = cmds.listRelatives(group_name, allDescendents=True, type='mesh', fullPath=True)
 
-        # 4. Create shader and texture
-        shader = cmds.shadingNode('lambert', asShader=True, name="chroShader")
-        shading_group = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name="chroSG")
-        cmds.connectAttr(f"{shader}.outColor", f"{shading_group}.surfaceShader", force=True)
+        if not shape_nodes:
+            om.MGlobal.displayError("ChroMaya: No mesh shapes found in the group.")
+            return
 
-        file_node = cmds.shadingNode('file', asTexture=True, name="chroFileTexture")
-        place2d = cmds.shadingNode('place2dTexture', asUtility=True)
-        
-        # Connect place2d to file
-        cmds.connectAttr(f"{place2d}.outUV", f"{file_node}.uvCoord", force=True)
-        cmds.connectAttr(f"{place2d}.outUvFilterSize", f"{file_node}.uvFilterSize", force=True)
-        
-        # Connect standard place2d attributes
-        for attr in ["coverage", "translateFrame", "rotateFrame", "mirrorU", "mirrorV", 
-                    "stagger", "wrapU", "wrapV", "repeatUV", "offset", "rotateUV", 
-                    "noiseUV", "vertexUvOne", "vertexUvTwo", "vertexUvThree"]:
-            cmds.connectAttr(f"{place2d}.{attr}", f"{file_node}.{attr}", force=True)
+        for shape in shape_nodes:
+            transform = cmds.listRelatives(shape, parent=True, fullPath=True)[0]
 
-        # 5. Create texture file
-        workspace = cmds.workspace(q=True, rootDirectory=True)
-        texture_path = os.path.join(workspace, "sourceimages", "chroMayaTexture.png")
-        texture_dir = os.path.dirname(texture_path)
-        
-        if not os.path.exists(texture_dir):
-            os.makedirs(texture_dir)
-        
-        # Create white texture
-        image = QtGui.QImage(1024, 1024, QtGui.QImage.Format_RGB32)
-        image.fill(QtGui.QColor("white"))
-        image.save(texture_path)
-        
-        # Set the file texture
-        cmds.setAttr(f"{file_node}.fileTextureName", texture_path, type="string")
-        cmds.connectAttr(f"{file_node}.outColor", f"{shader}.color")
+            # Skip if mesh has no UVs
+            uv_sets = cmds.polyUVSet(shape, q=True, allUVSets=True)
+            if not uv_sets:
+                om.MGlobal.displayWarning(f"ChroMaya: '{shape}' has no UVs. Skipping.")
+                continue
 
-        # 6. Assign shader to mesh
-        cmds.select(mesh)
-        cmds.hyperShade(assign=shader)
-        
-        # Make sure the mesh displays texture
-        cmds.polyOptions(mesh, colorShadedDisplay=True)
-        cmds.setAttr(f"{mesh}.displayColors", 1)
+            # Assign new Lambert shader
+            shader = cmds.shadingNode('lambert', asShader=True, name=f"{shape}_shader")
+            shading_group = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name=f"{shape}_SG")
+            cmds.connectAttr(f"{shader}.outColor", f"{shading_group}.surfaceShader", f=True)
+            cmds.sets(shape, edit=True, forceElement=shading_group)
 
-        # 7. Use a simpler approach to 3D Paint Tool setup using MEL
-        try:
-            # The most reliable way to set up 3D Paint Tool
-            cmds.select(mesh)
-            
-            # Create a new 3D Paint context
-            if cmds.art3dPaintCtx('art3dPaintContext', exists=True):
-                cmds.deleteUI('art3dPaintContext')
-            
-            # Create the context without any parameters that could cause issues
-            cmds.art3dPaintCtx('art3dPaintContext')
-            
-            # Switch to the tool
-            cmds.setToolTo('art3dPaintContext')
-            
-            # Execute MEL commands that are known to work
-            mel.eval('Art3dPaintToolOptions')
-            mel.eval('artSetToolAndSelectAttr("artAttrCtx", "art3dPaintContext");')
-            
-            # Try to set up texture painting directly with MEL
-            try:
-                mel.eval(f'art3dPaintSetup("{file_node}", "textured", "{mesh}");')
-                om.MGlobal.displayInfo("ChroMaya: Set up texture painting with MEL")
-            except:
-                om.MGlobal.displayWarning("ChroMaya: Could not set up texture painting with MEL")
-            
-            # Set the RGB color to apply
-            try:
-                # This is the most reliable way to set the brush color
-                cmds.colorSliderGrp('colorSlider', edit=True, rgbValue=(1.0, 1.0, 1.0))
-                om.MGlobal.displayInfo("ChroMaya: Set initial brush color to white")
-            except:
-                om.MGlobal.displayWarning("ChroMaya: Could not set initial brush color")
-            
-            # Open the Attribute Editor to help with configuration
-            mel.eval('openAEWindow')
-            
-            # And show the Tool Settings window
-            cmds.ToolSettingsWindow()
-            
-            # Select mesh again to ensure it's ready for painting
-            cmds.select(mesh)
-            
-            om.MGlobal.displayInfo(f"ChroMaya: Imported {mesh} ready for 3D painting")
-            om.MGlobal.displayInfo(f"ChroMaya: Texture path: {texture_path}")
-            
-        except Exception as e:
-            om.MGlobal.displayError(f"ChroMaya: Error setting up 3D Paint Tool: {e}")
+            # Create file texture and 2D placement
+            file_node = cmds.shadingNode('file', asTexture=True, name=f"{shape}_fileTex")
+            placement = cmds.shadingNode('place2dTexture', asUtility=True, name=f"{shape}_place2d")
+
+            # Connect placement to file
+            placement_attrs = [
+                "coverage", "translateFrame", "rotateFrame", "mirrorU", "mirrorV", "stagger",
+                "wrapU", "wrapV", "repeatUV", "offset", "rotateUV", "noiseUV",
+                "vertexUvOne", "vertexUvTwo", "vertexUvThree", "vertexCameraOne",
+                "outUV", "uvCoord", "outUvFilterSize", "uvFilterSize"
+            ]
+            for attr in placement_attrs:
+                if cmds.objExists(f"{placement}.{attr}") and cmds.objExists(f"{file_node}.{attr}"):
+                    try:
+                        cmds.connectAttr(f"{placement}.{attr}", f"{file_node}.{attr}", force=True)
+                    except:
+                        pass
+
+            # Connect texture to shader
+            cmds.connectAttr(f"{file_node}.outColor", f"{shader}.color", f=True)
+
+            # Create texture file path
+            safe_name = shape.replace("|", "_").replace(":", "_")
+            texture_path = f"/tmp/ChroMaya_{safe_name}.iff"
 
 
 # The command that shows the GUI
