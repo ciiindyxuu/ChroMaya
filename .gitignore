@@ -1,0 +1,22 @@
+# Node.js
+node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+package-lock.json
+yarn.lock
+
+# Maya specific
+*.ma
+*.mb
+*.mtl
+*.obj
+*.fbx
+*.fbx.bak
+*.mel
+*.log
+*.tmp
+*.swatches
+*.swatch
+*.swatchbook
+*.swatchbook.bak
